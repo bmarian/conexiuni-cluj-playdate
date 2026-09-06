@@ -11,7 +11,7 @@
 -- Left/Right steps one stop along the line, the crank pans freely, Up/Down
 -- flips direction, A opens the timetable.
 --
--- Scene properties: { route }.
+-- Scene properties: { route, dirKey (optional) }.
 
 RouteScene = {}
 class("RouteScene").extends(NobleScene)
@@ -89,14 +89,6 @@ local function focusStop(index)
 	targetX = worldXCentering(focusIndex)
 end
 
--- Sunday=7, Saturday=6, Monday..Friday=1..5 (playdate.getTime() convention).
-local function scheduleKeyForToday()
-	local weekday = playdate.getTime().weekday
-	if weekday == 7 then return "sunday" end
-	if weekday == 6 then return "saturday" end
-	return "weekdays"
-end
-
 local function parseHHMM(s)
 	local hour, minute = s:match("(%d+):(%d+)")
 	if hour == nil then return nil end
@@ -122,7 +114,7 @@ end
 -- here" is a normal answer rather than a data problem.
 local function departuresToday()
 	if route.timetable == nil then return {} end
-	local day = route.timetable[scheduleKeyForToday()]
+	local day = route.timetable[Store.scheduleKeyForToday()]
 	if day == nil then return {} end
 
 	local field = (dirKey == "out") and "departure_out" or "departure_in"
@@ -152,10 +144,10 @@ local function noBusesText()
 	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
 	for _, departure in ipairs(times) do
 		if departure.seconds > nowSeconds then
-			return "next departure " .. departure.label
+			return "next departure " .. Text.clockLabel(departure.label)
 		end
 	end
-	return "last departure was " .. times[#times].label
+	return "last departure was " .. Text.clockLabel(times[#times].label)
 end
 
 -- Every trip that should currently be somewhere on this line, as
@@ -164,7 +156,7 @@ end
 local function activeTrips()
 	if #stops < 2 or route.timetable == nil then return {}, nil end
 
-	local day = route.timetable[scheduleKeyForToday()]
+	local day = route.timetable[Store.scheduleKeyForToday()]
 	if day == nil then return {}, nil end
 
 	local now = playdate.getTime()
@@ -184,6 +176,11 @@ local function activeTrips()
 			local parsed = parseHHMM(departure)
 			if parsed ~= nil then
 				local elapsed = nowSeconds - parsed
+				-- A night departure is published as "25:05" and the clock says
+				-- 01:10, so elapsed comes out about minus a day. Rolling it
+				-- forward finds the trip; a genuinely future departure still
+				-- lands way past totalDuration and is filtered out below.
+				if elapsed < 0 then elapsed = elapsed + 24 * 3600 end
 				if elapsed >= 0 and elapsed <= totalDuration then
 					local index = logicalIndexForElapsed(offsets, elapsed)
 					if index ~= nil then
@@ -202,7 +199,12 @@ function scene:init(__sceneProperties)
 	route = __sceneProperties.route
 	favoriteMenuItem = nil
 
-	if route.directions.out ~= nil then
+	-- Stop Detail knows which direction you picked; honour it rather than
+	-- always opening outbound.
+	local requested = __sceneProperties.dirKey
+	if requested ~= nil and route.directions[requested] ~= nil then
+		setDirection(requested)
+	elseif route.directions.out ~= nil then
 		setDirection("out")
 	elseif route.directions["in"] ~= nil then
 		setDirection("in")
@@ -240,8 +242,18 @@ function scene:update()
 	end
 end
 
+-- The "in" direction is drawn right-to-left. Same geometry, mirrored about
+-- the screen: the terminus you start from sits on the right and the bus
+-- travels left, so flipping direction visibly reverses the map instead of
+-- redrawing an identical-looking line with different names on it.
+local function isFlipped()
+	return dirKey == "in"
+end
+
 local function stopScreenX(index)
-	return FIRST_X + (index - 1) * SPACING - worldX
+	local x = FIRST_X + (index - 1) * SPACING - worldX
+	if isFlipped() then return Theme.WIDTH - x end
+	return x
 end
 
 local function drawDirectionRow()
@@ -309,7 +321,11 @@ local function drawBus(logicalIndex)
 	Graphics.setColor(Graphics.kColorBlack)
 	Graphics.setLineWidth(1)
 	Graphics.drawRoundRect(x - 15, LINE_Y - 13, 30, 26, 5)
-	Icons.drawCentered("bus", 24, x, LINE_Y)
+	-- The pixelarticons bus faces right (its roof stops short of the body on
+	-- that side -- a raked windscreen). On the mirrored "in" direction the
+	-- bus travels left, so it has to be flipped or it drives backwards.
+	Icons.drawCentered("bus", 24, x, LINE_Y,
+		isFlipped() and Graphics.kImageFlippedX or Graphics.kImageUnflipped)
 end
 
 local function drawRouteLine()
@@ -341,9 +357,12 @@ local function drawRouteLine()
 		"stop " .. focusIndex .. " of " .. #stops,
 		Theme.WIDTH // 2, COUNTER_CENTER_Y, kTextAlignment.center, Theme.FONT_SMALL
 	)
+	-- Runs the same way as the line, or it contradicts it.
+	local position = focusIndex - 1
+	if isFlipped() then position = math.max(0, #stops - VISIBLE_SLOTS - position) end
 	Theme.scrollbarH(
 		Theme.MARGIN, SCROLLBAR_Y, Theme.WIDTH - 2 * Theme.MARGIN,
-		focusIndex - 1, VISIBLE_SLOTS, #stops
+		position, VISIBLE_SLOTS, #stops
 	)
 end
 
@@ -371,8 +390,10 @@ function scene:drawBackground()
 end
 
 scene.inputHandler = {
-	leftButtonDown = function() focusStop(focusIndex - 1) end,
-	rightButtonDown = function() focusStop(focusIndex + 1) end,
+	-- Step toward the stop you're pointing at, which is the other way round
+	-- once the line is mirrored.
+	leftButtonDown = function() focusStop(focusIndex + (isFlipped() and 1 or -1)) end,
+	rightButtonDown = function() focusStop(focusIndex + (isFlipped() and -1 or 1)) end,
 	upButtonDown = function() toggleDirection() end,
 	downButtonDown = function() toggleDirection() end,
 	AButtonDown = function()

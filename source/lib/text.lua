@@ -110,3 +110,14 @@ function Text.sortKey(s)
 		return string.format("%06d", tonumber(digits))
 	end))
 end
+
+-- CTP publishes a service day that runs past midnight the GTFS way: the
+-- 01:05 night bus is listed as "25:05", so its departures keep sorting after
+-- the 23:00 one instead of jumping to the top of the timetable. Sort on the
+-- raw value, draw this.
+function Text.clockLabel(hhmm)
+	if hhmm == nil then return "" end
+	local hour, minute = hhmm:match("(%d+):(%d+)")
+	if hour == nil then return hhmm end
+	return string.format("%02d:%s", tonumber(hour) % 24, minute)
+end

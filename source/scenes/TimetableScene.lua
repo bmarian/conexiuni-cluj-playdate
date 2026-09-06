@@ -56,13 +56,6 @@ local function clamp(value, lo, hi)
 	return value
 end
 
-local function scheduleKeyForToday()
-	local weekday = playdate.getTime().weekday
-	if weekday == 7 then return "sunday" end
-	if weekday == 6 then return "saturday" end
-	return "weekdays"
-end
-
 local function day()
 	return route.timetable ~= nil and route.timetable[dayKey] or nil
 end
@@ -87,6 +80,8 @@ local function buildRows()
 				byHour[hour] = byHour[hour] or {}
 				table.insert(byHour[hour], { minute = minute, time = time })
 			end
+			-- `hour` stays raw ("25") so the row sorts after 23 rather than
+			-- leaping to the top of the day; only the label wraps.
 		end
 	end
 
@@ -96,7 +91,11 @@ local function buildRows()
 	for _, hour in ipairs(hours) do
 		local departures = byHour[hour]
 		table.sort(departures, function(a, b) return a.minute < b.minute end)
-		table.insert(rows, { hour = hour, departures = departures })
+		table.insert(rows, {
+			hour = hour,
+			label = string.format("%02d", tonumber(hour) % 24),
+			departures = departures,
+		})
 	end
 end
 
@@ -134,6 +133,11 @@ local function setDay(key)
 	buildRows()
 	selectNextDeparture()
 	scrollToSelection()
+	-- 143 of the route/day/direction combinations in the export have no
+	-- departures at all. With nothing in the grid to move between, focus has
+	-- to sit on the tabs or the d-pad does nothing and the only way off the
+	-- screen is B.
+	if #rows == 0 then focus = FOCUS_TABS end
 end
 
 local function stepDay(delta)
@@ -148,7 +152,7 @@ end
 --- Steps one departure forward or back, rolling over into the next or
 --- previous hour, so the grid reads as one ordered day rather than rows.
 local function stepDeparture(delta)
-	if #rows == 0 then return end
+	if #rows == 0 then focus = FOCUS_TABS return end
 	local column = selectedColumn + delta
 
 	if column < 1 then
@@ -166,7 +170,7 @@ local function stepDeparture(delta)
 end
 
 local function stepHour(delta)
-	if #rows == 0 then return end
+	if #rows == 0 then focus = FOCUS_TABS return end
 	if delta < 0 and selectedRow == 1 then
 		focus = FOCUS_TABS
 		return
@@ -187,7 +191,7 @@ function scene:init(__sceneProperties)
 	dirKey = __sceneProperties.dirKey
 	scene.super.init(self)
 	focus = FOCUS_GRID
-	setDay(scheduleKeyForToday())
+	setDay(Store.scheduleKeyForToday())
 end
 
 local function drawTabs()
@@ -221,7 +225,7 @@ end
 local function drawGrid()
 	local today = day()
 	if today == nil then
-		Theme.emptyState(nil, "No schedule for this day")
+		Theme.emptyState("square-alert", "No service this day", "pick another day above")
 		return
 	end
 
@@ -234,11 +238,11 @@ local function drawGrid()
 	end
 
 	if #rows == 0 then
-		Theme.emptyState(nil, "No departures listed")
+		Theme.emptyState("square-alert", "No service this day", "pick another day above")
 		return
 	end
 
-	local todaysHour = (dayKey == scheduleKeyForToday())
+	local todaysHour = (dayKey == Store.scheduleKeyForToday())
 		and string.format("%02d", playdate.getTime().hour) or nil
 
 	for offset = 0, visibleRows() - 1 do
@@ -253,11 +257,11 @@ local function drawGrid()
 		-- or a filled row: a badge is taller than a 21px row and a fill would
 		-- compete with the selected departure, which owns the black on this
 		-- screen. A 7px arrow costs no vertical room at all.
-		if row.hour == todaysHour then
+		if row.label == todaysHour then
 			Graphics.setColor(Graphics.kColorBlack)
 			Graphics.fillTriangle(4, centerY - 5, 4, centerY + 5, 11, centerY)
 		end
-		Theme.textCentered(row.hour, Theme.MARGIN + 8, centerY, kTextAlignment.left, Theme.FONT_TITLE)
+		Theme.textCentered(row.label, Theme.MARGIN + 8, centerY, kTextAlignment.left, Theme.FONT_TITLE)
 
 		for columnIndex, departure in ipairs(row.departures) do
 			-- Everything in the cell is placed from its center, so the chip
@@ -324,14 +328,14 @@ scene.inputHandler = {
 	end,
 	downButtonDown = function()
 		if focus == FOCUS_TABS then
-			focus = FOCUS_GRID
+			if #rows > 0 then focus = FOCUS_GRID end
 		else
 			stepHour(1)
 		end
 	end,
 	AButtonDown = function()
 		if focus == FOCUS_TABS then
-			focus = FOCUS_GRID
+			if #rows > 0 then focus = FOCUS_GRID end
 			return
 		end
 		local departure = selectedDeparture()

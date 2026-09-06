@@ -33,7 +33,7 @@ ICONS = {
     "star": (24,),            # favorites
     "reload": (24,),          # sync
     "clock": (24, 12),        # timetable, synced-ago banner
-    "square-alert": (12,),    # stale sync warning
+    "square-alert": (24, 12), # empty states, stale sync warning
     "calendar": (24,),        # timetable header
     "chevron-left": (12,),    # d-pad hints, direction toggle
     "chevron-right": (12,),

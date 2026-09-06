@@ -163,6 +163,15 @@ function Store.setFavoriteStop(stopId)
 	playdate.datastore.write(Store.favorites, FAVORITES_FILE)
 end
 
+-- Which of the timetable's three service days applies right now.
+-- Sunday=7, Saturday=6, Monday..Friday=1..5 (playdate.getTime() convention).
+function Store.scheduleKeyForToday()
+	local weekday = playdate.getTime().weekday
+	if weekday == 7 then return "sunday" end
+	if weekday == 6 then return "saturday" end
+	return "weekdays"
+end
+
 -- The export ships one cumulative-offset array per hour of the day
 -- (`hourly_offset_seconds`), because segment travel times vary by time of day
 -- and a snapshot is browsed for up to a day after it's synced. Route Detail

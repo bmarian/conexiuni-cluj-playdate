@@ -90,6 +90,22 @@ local timetable <const> = {
 	sunday = { entries = entries },
 }
 
+-- A night route: CTP publishes past-midnight departures as 24:xx / 25:xx so
+-- they keep sorting after 23:00. They have to *draw* as 00 and 01.
+local nightTimetable <const> = {
+	weekdays = { entries = {
+		{ departure_out = "23:00", departure_in = "23:05" },
+		{ departure_out = "23:30", departure_in = "23:35" },
+		{ departure_out = "24:00", departure_in = "24:05" },
+		{ departure_out = "24:35", departure_in = "24:40" },
+		{ departure_out = "25:05", departure_in = "25:10" },
+	} },
+	-- No weekend service at all: the case where the grid is empty and focus
+	-- has to fall back to the tabs or the screen traps you.
+	saturday = { entries = {} },
+	sunday = { entries = {} },
+}
+
 local route <const> = {
 	route_id = 1,
 	route_short_name = "1",
@@ -108,14 +124,41 @@ local shortNames <const> = {
 	"102L", "25", "9", "M11", "100", "5N", "25N", "1", "M9", "43B",
 	"26", "101", "8L", "A1", "M21", "3", "50D", "102", "12", "57L",
 }
-local routes = { route }
+-- Each route runs a few minutes off the last, so Stop Detail has something
+-- real to sort by instead of 40 identical rows.
+local function shiftedTimetable(shiftMinutes)
+	local shifted = {}
+	for _, entry in ipairs(entries) do
+		local function shift(time)
+			local hour, minute = time:match("(%d+):(%d+)")
+			local total = (tonumber(hour) * 60 + tonumber(minute) + shiftMinutes) % (24 * 60)
+			return string.format("%02d:%02d", total // 60, total % 60)
+		end
+		table.insert(shifted, {
+			departure_out = shift(entry.departure_out),
+			departure_in = shift(entry.departure_in),
+		})
+	end
+	return { weekdays = { entries = shifted }, saturday = { entries = shifted }, sunday = { entries = shifted } }
+end
+
+local routes = {
+	route,
+	{
+		route_id = 900,
+		route_short_name = "25N",
+		route_long_name = "Night service - Disp. Unirii",
+		directions = route.directions,
+		timetable = nightTimetable,
+	},
+}
 for i, shortName in ipairs(shortNames) do
-	routes[i + 1] = {
-		route_id = i + 1,
+	routes[i + 2] = {
+		route_id = i + 2,
 		route_short_name = shortName,
 		route_long_name = "P-ța Mihai Viteazul - Str. Emil Quinet nr. " .. i,
 		directions = route.directions,
-		timetable = timetable,
+		timetable = shiftedTimetable(i * 3),
 	}
 end
 
@@ -201,22 +244,46 @@ local steps <const> = {
 	function() for _ = 1, 4 do TripScene.inputHandler.downButtonDown() end end,
 	function() shoot("11-trip-scrolled") end,
 	function() TripScene.inputHandler.BButtonDown() end,
+	-- Straight to the night route's timetable: its hours run 23, 24, 25 in
+	-- the data and must draw as 23, 00, 01, and its weekends are empty.
+	function()
+		for _, r in ipairs(Store.data.routes) do
+			if r.route_short_name == "25N" then
+				Nav.push(TimetableScene, { route = r, dirKey = "out" })
+				return
+			end
+		end
+	end,
+	-- It opens on today, which this route doesn't run: the grid is empty, so
+	-- focus must fall back to the tabs or the d-pad does nothing at all.
+	function() shoot("12-timetable-no-service") end,
+	-- Proof it isn't a dead end, and the payoff: weekdays run past midnight,
+	-- listed as 24:xx and 25:xx and drawn as 00 and 01.
+	function() TimetableScene.inputHandler.rightButtonDown() end,
+	function() shoot("13-timetable-past-midnight") end,
+	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function() ListScene.inputHandler.BButtonDown() end,
-	function() shoot("12-back-at-mainmenu") end,
+	function() shoot("14-back-at-mainmenu") end,
 	function()
 		MainMenuScene.inputHandler.downButtonDown()
 		MainMenuScene.inputHandler.AButtonDown()
 	end,
-	function() shoot("13-stoplist") end,
+	function() shoot("15-stoplist") end,
 	function() ListScene.inputHandler.AButtonDown() end,
-	function() shoot("14-stop") end,
+	function() shoot("16-stop") end,
+	-- Drill from a departure into that route, in the direction shown.
+	function() for _ = 1, 2 do StopScene.inputHandler.downButtonDown() end end,
+	function() shoot("17-stop-scrolled") end,
+	function() StopScene.inputHandler.AButtonDown() end,
+	function() shoot("18-stop-into-route") end,
+	function() RouteScene.inputHandler.BButtonDown() end,
 	function()
-		shootDetached("15-sync", SyncScene({}))
+		shootDetached("19-sync", SyncScene({}))
 		-- Stale snapshot, no favourites: the other half of the menu's states.
 		Store.data.synced_at = playdate.getSecondsSinceEpoch() - 3 * 24 * 60 * 60
-		shootDetached("16-mainmenu-stale", MainMenuScene({}))
+		shootDetached("20-mainmenu-stale", MainMenuScene({}))
 	end,
 }
 

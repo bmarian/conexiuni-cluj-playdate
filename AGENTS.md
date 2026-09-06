@@ -94,6 +94,16 @@ headway can show several buses at once; outside service hours it shows none.
 This is still fully offline — it's schedule math against the device's clock,
 not live vehicle data.
 
+The **"in" direction is drawn right-to-left** — the same geometry mirrored
+about the screen. Flipping direction otherwise redraws a line that looks
+identical with different names on it; mirroring makes the change obvious at
+a glance. Left/Right step toward the stop you're pointing at, which is the
+opposite index once mirrored, and the position bar runs the same way as the
+line rather than contradicting it. The bus icon is flipped to match: the
+pixelarticons bus faces right (its roof stops short of the body on that
+side, a raked windscreen), so on the mirrored direction it is drawn with
+`Graphics.kImageFlippedX` or it drives backwards.
+
 **An empty line is usually correct, not a bug.** Route 57 on a Sunday runs a
 ~35 minute headway over a ~28 minute route, so for roughly a fifth of the
 day nothing is in transit; 36 of the 107 routes have no Sunday service at
@@ -207,6 +217,63 @@ it is the only mapping that reads right. Menu button stays reserved for the
 system menu, which is where "favorite route"/"favorite stop" live: the four
 buttons are all spoken for, and per-screen extras are what that menu is for.
 
+### Stop Detail is a departure board
+
+`StopScene` answers one question — *which bus is next from here* — and is
+built accordingly:
+
+- **One row per route AND direction.** A route passing both ways is two
+  different answers, so it gets two rows with different headsigns.
+- **Times are at this stop**, not at the route's origin: the trip's departure
+  plus this stop's cumulative offset. Standing halfway along a route, the
+  origin time is the wrong number.
+- **Trips that terminate here are dropped** (`index == #direction.stops`).
+  Without that, a terminus shows a board full of buses arriving to go out of
+  service — real times you cannot board. Disp. Bucium, the busiest stop with
+  31 route/direction pairs, listed three of them before this filter.
+- **Only what's still to come today**, sorted soonest first. A route whose
+  last bus has gone has nothing to say on a screen this size.
+- Relative under the hour ("6m", or "now" inside a minute), absolute beyond
+  it ("14:38"): three minutes is a countdown, three hours is an appointment.
+- Each row shows **as many times as fit**, decided per row — a long route
+  number and a long headsign eat into the same width, and the destination
+  wins (`MIN_LABEL_W`).
+- A is a drill-in to that route **in the direction shown** (`RouteScene`
+  takes an optional `dirKey`).
+
+The scan is done in `scene:init` rather than kept as a permanent stop→routes
+index: all 107 routes × 2 directions for the busiest stop measured **2 ms**
+in the Simulator, and the snapshot is already the big thing in memory.
+
+### Times past midnight
+
+CTP publishes a service day that runs past midnight the GTFS way: the 01:05
+night bus is listed as **`25:05`**, so its departures keep sorting after the
+23:00 one instead of jumping to the top of the timetable. Sort and do
+arithmetic on the raw value; draw `Text.clockLabel(s)`, which wraps the hour
+modulo 24. `RouteScene`'s active-trip math also rolls a negative elapsed
+forward by a day, or a night bus never registers as running once the clock
+passes midnight. `Store.offsetsForHour` already handles it for free — hour
+25 is distance 0 from hour 1 in its wrap-around search.
+
+**Upstream data warning:** four routes carry hours far beyond a night
+service — route 25 has departures up to `46:45`, route 43 jumps straight
+from `12:00` to `35:00`. Those are not past-midnight times (46 % 24 = 22)
+and are almost certainly a GTFS parsing bug in `conexiuni-cluj`, not
+something this app can repair. They render as whatever `% 24` gives, which
+makes them look plausible but wrong; only 25N and 54N are genuine night
+services. Worth fixing at the source.
+
+### Empty days
+
+143 of the route/day/direction combinations in the export have **no
+departures at all** — most routes don't run on Sundays. `TimetableScene`
+forces focus onto the day tabs whenever the grid is empty (`setDay`,
+`stepHour`, `stepDeparture`), because with nothing in the grid to move
+between, the d-pad does nothing and B becomes the only way off the screen.
+Any new focus-based screen needs the same care: **there must always be
+something the d-pad can move.**
+
 The timetable needs two things from one d-pad — switch day, and pick a
 departure — so **focus moves between the tab strip and the grid** instead of
 adding a modifier. Left/Right switches day on the tabs and steps departure
@@ -225,7 +292,7 @@ All data below comes from local storage after sync — see New Endpoint.
 | `RouteScene` | three-stop window of the line, schedule-approximated buses, direction toggle, position readout |
 | `TimetableScene` | day tabs + hour-grouped grid; **every departure is individually selectable**, and A on one opens `TripScene` |
 | `TripScene` | one departure, stop by stop: what time "the 13:37" reaches every stop on the way |
-| `StopScene` | placeholder until Stop Detail is built; real chrome, so it doesn't look broken |
+| `StopScene` | departure board: which bus leaves from here next, soonest first |
 
 Favorites are on-device only (`playdate.datastore`, a separate small file
 from the synced snapshot) — a route/stop ID plus enough to render the Main
@@ -371,7 +438,7 @@ conexiuni-cluj-playdate/
 │       ├── RouteScene.lua    three-stop window of the line + buses
 │       ├── TimetableScene.lua day tabs + selectable departure grid
 │       ├── TripScene.lua     one departure, stop by stop
-│       └── StopScene.lua     placeholder (Stop Detail not built yet)
+│       ├── StopScene.lua     departure board for one stop
 └── tools/
     ├── watch.ps1             rebuilds on source change (no watch mode in pdc)
     ├── screenshots.ps1       renders every screen to screenshots/
@@ -417,7 +484,7 @@ LuaCATS stubs; `.luarc.json` points `workspace.library` at it and sets
   and pixelarticons throughout. Every scene renders correctly with real
   Romanian names — verified from actual renders via `tools/screenshots.ps1`,
   not by eye over the code.
-- All scenes exist except Stop Detail, which is a styled placeholder.
+- All six screens are built, Stop Detail included.
 - Favorites can be set from the system menu on Route/Stop Detail, and the
   Main Menu shows the favorite's name once one is set.
 
@@ -427,11 +494,9 @@ list, timetable and trip times checked from real renders.
 
 Next:
 
-1. Stop Detail: routes serving the stop, each with its timetable. Build it
-   out of `Theme.row` + a gridview, the way `ListScene` and `TripScene` do.
-2. Run it on hardware and confirm the sync timings hold there — the
+1. Run it on hardware and confirm the sync timings hold there — the
    Simulator is on a much faster link and CPU.
-3. Later: on-device caching refinements, a bundled fallback snapshot for
+2. Later: on-device caching refinements, a bundled fallback snapshot for
    first launch before any sync.
 
 ## Testing And Verification

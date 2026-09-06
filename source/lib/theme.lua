@@ -201,7 +201,11 @@ end
 --- drawn narrower (to leave room for a scrollbar), or the accessory ends up
 --- drawn past the clip and loses its last character.
 ---
---- opts: { icon, badge, label, accessory, font, accessoryFont, width }
+--- `accessories` is a right-aligned group of short strings, soonest first,
+--- for rows that carry several values (the next few departures at a stop).
+--- The first is boxed, because it's the one that matters.
+---
+--- opts: { icon, badge, label, accessory, accessories, font, accessoryFont, width }
 function Theme.row(y, height, selected, opts)
 	local centerY = y + height // 2
 	local font = opts.font or Theme.FONT_BODY
@@ -224,15 +228,33 @@ function Theme.row(y, height, selected, opts)
 		if selected then Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite) end
 	end
 
-	local right = Theme.MARGIN
+	-- Everything on the right is placed from the right edge inward; whatever
+	-- is left over is the label's, and it gets truncated to exactly that.
+	local labelRight = width - Theme.MARGIN
+
 	if opts.accessory ~= nil then
 		local accessoryFont = opts.accessoryFont or Theme.FONT_SMALL
-		local accessoryWidth = accessoryFont:getTextWidth(opts.accessory)
-		Theme.textCentered(opts.accessory, width - Theme.MARGIN, centerY, kTextAlignment.right, accessoryFont)
-		right = right + accessoryWidth + Theme.MARGIN
+		Theme.textCentered(opts.accessory, labelRight, centerY, kTextAlignment.right, accessoryFont)
+		labelRight = labelRight - accessoryFont:getTextWidth(opts.accessory) - Theme.MARGIN
 	end
 
-	local available = width - x - right
+	if opts.accessories ~= nil then
+		-- Drawn back to front so the soonest still ends up leftmost.
+		for i = #opts.accessories, 2, -1 do
+			local label = opts.accessories[i]
+			Theme.textCentered(label, labelRight, centerY, kTextAlignment.right, Theme.FONT_SMALL)
+			labelRight = labelRight - Theme.FONT_SMALL:getTextWidth(label) - 10
+		end
+		local next = opts.accessories[1]
+		if next ~= nil then
+			local boxWidth = Theme.badgeWidth(next, Theme.FONT_SMALL)
+			Theme.badge(labelRight - boxWidth, centerY, next, Theme.FONT_SMALL, selected)
+			if selected then Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite) end
+			labelRight = labelRight - boxWidth - Theme.MARGIN
+		end
+	end
+
+	local available = labelRight - x
 	Theme.textCentered(
 		Text.truncateToWidth(Text.clean(opts.label or ""), available, font),
 		x, centerY, kTextAlignment.left, font

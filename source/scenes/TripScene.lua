@@ -130,7 +130,9 @@ function scene:drawBackground()
 	scene.super.drawBackground(self)
 
 	Theme.header({
-		title = "Departing " .. departure,
+		-- The raw value can be "25:05"; that's the right thing to do the
+		-- maths with and the wrong thing to show anybody.
+		title = "Departing " .. Text.clockLabel(departure),
 		badge = Text.clean(route.route_short_name),
 		icon = "clock",
 	})

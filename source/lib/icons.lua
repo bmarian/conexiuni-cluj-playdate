@@ -21,15 +21,18 @@ function Icons.get(name, size)
 	return image
 end
 
---- Draws an icon with its top-left corner at x, y.
-function Icons.draw(name, size, x, y)
+--- Draws an icon with its top-left corner at x, y. `flip` is one of the
+--- Graphics.kImageFlipped* constants; omit it for the icon as drawn.
+function Icons.draw(name, size, x, y, flip)
 	local image = Icons.get(name, size)
-	if image ~= nil then image:draw(x, y) end
+	if image ~= nil then image:draw(x, y, flip or Graphics.kImageUnflipped) end
 end
 
 --- Draws an icon centered on x, y -- the usual call, since icons mostly sit
 --- next to text whose vertical center is the thing worth aligning to.
-function Icons.drawCentered(name, size, x, y)
+function Icons.drawCentered(name, size, x, y, flip)
 	local image = Icons.get(name, size)
-	if image ~= nil then image:draw(x - size // 2, y - size // 2) end
+	if image ~= nil then
+		image:draw(x - size // 2, y - size // 2, flip or Graphics.kImageUnflipped)
+	end
 end
