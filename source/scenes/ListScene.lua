@@ -66,7 +66,14 @@ function scene:init(__sceneProperties)
 	options = __sceneProperties
 	key = __sceneProperties.key
 	title = __sceneProperties.title
-	items = __sceneProperties.items or {}
+	-- A refreshable list rebuilds on entry rather than trusting the array it
+	-- was pushed with: coming back here after favouriting something else
+	-- would otherwise show the list as it was when you left.
+	if __sceneProperties.refresh ~= nil then
+		items = __sceneProperties.refresh() or {}
+	else
+		items = __sceneProperties.items or {}
+	end
 	builtAtRevision = Store.favoritesRevision
 	crankAccumulator = 0
 

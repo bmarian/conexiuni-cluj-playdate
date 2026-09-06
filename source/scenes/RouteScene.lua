@@ -11,7 +11,7 @@
 -- Left/Right steps one stop along the line, the crank pans freely, Up/Down
 -- flips direction, A opens the timetable.
 --
--- Scene properties: { route, dirKey (optional) }.
+-- Scene properties: { route, dirKey (optional), stopId (optional) }.
 
 RouteScene = {}
 class("RouteScene").extends(NobleScene)
@@ -83,10 +83,20 @@ local function toggleDirection()
 	end
 end
 
-local function focusStop(index)
+local function focusStop(index, immediate)
 	if #stops == 0 then return end
 	focusIndex = clamp(index, 1, #stops)
 	targetX = worldXCentering(focusIndex)
+	-- Arriving from Stop Detail should already be there, not glide across
+	-- the route while you watch.
+	if immediate then worldX = targetX end
+end
+
+local function indexOfStop(stopId)
+	for index, stop in ipairs(stops) do
+		if stop.stop_id == stopId then return index end
+	end
+	return nil
 end
 
 local function parseHHMM(s)
@@ -210,6 +220,12 @@ function scene:init(__sceneProperties)
 		setDirection("in")
 	else
 		dirKey, stops, worldX, targetX, focusIndex = nil, {}, 0, 0, 1
+	end
+
+	-- Opened from a stop: start the line at that stop.
+	if __sceneProperties.stopId ~= nil then
+		local index = indexOfStop(__sceneProperties.stopId)
+		if index ~= nil then focusStop(index, true) end
 	end
 end
 

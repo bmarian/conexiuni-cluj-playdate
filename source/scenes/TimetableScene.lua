@@ -46,6 +46,12 @@ local rows = {}
 local selectedRow, selectedColumn = 1, 1
 local scrollTop, crankAccumulator = 0, 0
 
+-- Backing out of a trip rebuilds this scene from scratch (see lib/nav.lua),
+-- so where you were is remembered here, per route and direction. Without it
+-- B from a trip always dumped you back on the first hour of today.
+local remembered = {}
+local rememberKey = nil
+
 local function visibleRows()
 	return (Theme.CONTENT_BOTTOM - GRID_TOP) // ROW_H
 end
@@ -190,8 +196,34 @@ function scene:init(__sceneProperties)
 	route = __sceneProperties.route
 	dirKey = __sceneProperties.dirKey
 	scene.super.init(self)
-	focus = FOCUS_GRID
-	setDay(Store.scheduleKeyForToday())
+
+	rememberKey = route.route_id .. ":" .. tostring(dirKey)
+	local saved = remembered[rememberKey]
+	if saved == nil then
+		focus = FOCUS_GRID
+		setDay(Store.scheduleKeyForToday())
+		return
+	end
+
+	focus = saved.focus
+	dayKey = saved.dayKey
+	scrollTop = 0
+	crankAccumulator = 0
+	buildRows()
+	selectedRow = clamp(saved.row, 1, math.max(1, #rows))
+	local row = rows[selectedRow]
+	selectedColumn = row ~= nil and clamp(saved.column, 1, #row.departures) or 1
+	scrollToSelection()
+end
+
+function scene:exit()
+	scene.super.exit(self)
+	remembered[rememberKey] = {
+		dayKey = dayKey,
+		row = selectedRow,
+		column = selectedColumn,
+		focus = focus,
+	}
 end
 
 local function drawTabs()

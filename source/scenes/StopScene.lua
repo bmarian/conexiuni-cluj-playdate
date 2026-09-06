@@ -33,6 +33,9 @@ local grid = nil
 local crankAccumulator = 0
 local favoriteMenuItem = nil
 local builtAtMinute = nil
+-- Which departure you were on, per stop, so backing out of a route returns
+-- you to it.
+local rememberedRows = {}
 
 local function listHeight()
 	return Theme.CONTENT_BOTTOM - Theme.CONTENT_TOP
@@ -73,6 +76,12 @@ function scene:init(__sceneProperties)
 	grid:setNumberOfRows(math.max(1, #departures))
 	grid.scrollCellsToCenter = false
 	grid:setScrollDuration(120)
+
+	local saved = rememberedRows[stop.stop_id]
+	if saved ~= nil and #departures > 0 then
+		grid:setSelectedRow(math.min(saved, #departures))
+		grid:scrollCellToCenter(1, math.min(saved, #departures), 1, false)
+	end
 
 	function grid:drawCell(_, row, _, selected, x, y, width, height)
 		local entry = departures[row]
@@ -123,6 +132,7 @@ end
 
 function scene:exit()
 	scene.super.exit(self)
+	rememberedRows[stop.stop_id] = grid:getSelectedRow()
 	if favoriteMenuItem ~= nil then
 		playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
 		favoriteMenuItem = nil
@@ -173,7 +183,13 @@ scene.inputHandler = {
 	AButtonDown = function()
 		local entry = departures[grid:getSelectedRow()]
 		if entry ~= nil then
-			Nav.push(RouteScene, { route = entry.route, dirKey = entry.dirKey })
+			-- Hand the stop along so the route line opens where you are
+			-- standing rather than at the far end of the route.
+			Nav.push(RouteScene, {
+				route = entry.route,
+				dirKey = entry.dirKey,
+				stopId = stop.stop_id,
+			})
 		end
 	end,
 	BButtonDown = function() Nav.pop() end,

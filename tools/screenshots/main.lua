@@ -278,6 +278,7 @@ local steps <const> = {
 	function() for _ = 1, 4 do TripScene.inputHandler.downButtonDown() end end,
 	function() shoot("16-trip-scrolled") end,
 	function() TripScene.inputHandler.BButtonDown() end,
+	function() shoot("17-timetable-remembered") end,
 	-- Straight to the night route's timetable: its hours run 23, 24, 25 in
 	-- the data and must draw as 23, 00, 01, and its weekends are empty.
 	function()
@@ -290,34 +291,34 @@ local steps <const> = {
 	end,
 	-- It opens on today, which this route doesn't run: the grid is empty, so
 	-- focus must fall back to the tabs or the d-pad does nothing at all.
-	function() shoot("17-timetable-no-service") end,
+	function() shoot("18-timetable-no-service") end,
 	-- Proof it isn't a dead end, and the payoff: weekdays run past midnight,
 	-- listed as 24:xx and 25:xx and drawn as 00 and 01.
 	function() TimetableScene.inputHandler.rightButtonDown() end,
-	function() shoot("18-timetable-past-midnight") end,
+	function() shoot("19-timetable-past-midnight") end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function() ListScene.inputHandler.BButtonDown() end,
-	function() shoot("19-back-at-mainmenu") end,
+	function() shoot("20-back-at-mainmenu") end,
 	function()
 		MainMenuScene.inputHandler.downButtonDown()
 		MainMenuScene.inputHandler.AButtonDown()
 	end,
-	function() shoot("20-stoplist") end,
+	function() shoot("21-stoplist") end,
 	function() ListScene.inputHandler.AButtonDown() end,
-	function() shoot("21-stop") end,
+	function() shoot("22-stop") end,
 	-- Drill from a departure into that route, in the direction shown.
 	function() for _ = 1, 2 do StopScene.inputHandler.downButtonDown() end end,
-	function() shoot("22-stop-scrolled") end,
+	function() shoot("23-stop-scrolled") end,
 	function() StopScene.inputHandler.AButtonDown() end,
-	function() shoot("23-stop-into-route") end,
+	function() shoot("24-stop-into-route") end,
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function()
-		shootDetached("24-sync", SyncScene({}))
+		shootDetached("25-sync", SyncScene({}))
 		-- Stale snapshot, no favourites: the other half of the menu's states.
 		Store.data.synced_at = playdate.getSecondsSinceEpoch() - 3 * 24 * 60 * 60
-		shootDetached("25-mainmenu-stale", MainMenuScene({}))
+		shootDetached("26-mainmenu-stale", MainMenuScene({}))
 	end,
 }
 

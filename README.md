@@ -49,6 +49,15 @@ a PNG of each to `screenshots/`:
 ./tools/screenshots.ps1
 ```
 
+## Launcher art
+
+The card, icon and splash image in `source/launcher/` are generated, not
+hand-drawn. Re-run after changing `tools/launcher/main.lua`:
+
+```powershell
+./tools/launcher.ps1
+```
+
 ## Third-party
 
 - [Noble Engine](https://noblerobot.github.io/NobleEngine) (MIT), vendored
