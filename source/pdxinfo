@@ -3,4 +3,5 @@ author=bmarian
 description=Offline Cluj-Napoca public transit schedules for Playdate
 bundleID=com.bmarian.conexiunicluj
 version=0.1.0
-buildNumber=1
+buildNumber=2
+imagePath=launcher
