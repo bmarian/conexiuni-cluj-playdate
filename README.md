@@ -29,7 +29,14 @@ PlaydateSimulator ConexiuniCluj.pdx
 ```
 
 No local backend needed — the app talks to the deployed API directly.
-Rebuild and relaunch after every source change.
+
+`pdc` has no watch mode. `tools/watch.ps1` polls `source/` and rebuilds on
+change; keep the Simulator open and press Ctrl-R (Cmd-R on Mac) after each
+rebuild to reload without relaunching:
+
+```powershell
+./tools/watch.ps1
+```
 
 ## Editor autocomplete
 

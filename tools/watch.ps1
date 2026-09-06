@@ -17,22 +17,21 @@ function Build {
 	}
 }
 
-Build
-
-$watcher = New-Object System.IO.FileSystemWatcher
-$watcher.Path = $sourceDir
-$watcher.IncludeSubdirectories = $true
-$watcher.EnableRaisingEvents = $true
-
-$action = {
-	Start-Sleep -Milliseconds 200 # debounce
-	Build
+function LatestWriteTime {
+	Get-ChildItem $sourceDir -Recurse -File |
+		Measure-Object -Property LastWriteTimeUtc -Maximum |
+		Select-Object -ExpandProperty Maximum
 }
 
-Register-ObjectEvent $watcher Changed -Action $action | Out-Null
-Register-ObjectEvent $watcher Created -Action $action | Out-Null
-Register-ObjectEvent $watcher Deleted -Action $action | Out-Null
-Register-ObjectEvent $watcher Renamed -Action $action | Out-Null
+Build
+$lastSeen = LatestWriteTime
 
 Write-Host "Watching $sourceDir for changes. Ctrl-C to stop."
-while ($true) { Start-Sleep -Seconds 1 }
+while ($true) {
+	Start-Sleep -Milliseconds 500
+	$current = LatestWriteTime
+	if ($current -ne $lastSeen) {
+		$lastSeen = $current
+		Build
+	}
+}

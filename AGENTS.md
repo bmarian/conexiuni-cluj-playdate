@@ -68,9 +68,11 @@ conexiuni-cluj-playdate/
 ├── .luarc.json            lua-language-server config
 ├── library/
 │   └── playdate-luacats/  git submodule: Lua type stubs for the SDK
-└── source/
-    ├── pdxinfo            name, bundleID, version
-    └── main.lua           entry point, update loop, live API calls
+├── source/
+│   ├── pdxinfo            name, bundleID, version
+│   └── main.lua           entry point, update loop, live API calls
+└── tools/
+    └── watch.ps1          rebuilds on source change (no watch mode in pdc)
 ```
 
 ## Build And Run
@@ -84,6 +86,11 @@ PlaydateSimulator ConexiuniCluj.pdx
 
 `ConexiuniCluj.pdx` is a build artifact (gitignored); rebuild from `source/`
 rather than editing it directly.
+
+`pdc` has no watch mode. `tools/watch.ps1` polls `source/` and rebuilds on
+change. The Simulator itself has a Restart shortcut (Ctrl-R / Cmd-R) that
+reloads the currently open `.pdx` from disk — no relaunch needed after a
+rebuild.
 
 ## Editor Setup
 
