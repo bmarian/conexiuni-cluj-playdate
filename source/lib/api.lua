@@ -1,26 +1,12 @@
--- Thin wrapper around playdate.network.http. Used only by the sync screen;
--- every other screen reads from Store (local data), never the network.
--- Defined as a global (not `local M = {}; return M`) because Playdate's
--- `import` only returns a value the FIRST time a file is imported anywhere
--- in the compiled bundle -- a second import from elsewhere silently gets
--- nil. A global avoids depending on import order entirely.
+-- Global, not a module return: playdate's `import` yields a value only on the
+-- first import of a file in the bundle.
 
 Api = Api or {}
 
 local net <const> = playdate.network
 
---- Streams a GET response straight to a file, a chunk per read callback.
----
---- It deliberately never builds the body as a Lua string and never decodes
---- it. The export is ~1MB of JSON; holding that as a string and decoding it
---- inside one callback blocks the update loop long enough for the device to
---- report "loop stalled for more than 10s", and re-encoding it afterwards
---- (which is what playdate.datastore.write does) costs as much again. Going
---- to disk in chunks spreads the work over the frames the download takes
---- anyway, and leaves exactly one decode, at load time.
----
---- request: { host, port, useSSL, path, reason, destination,
----            onProgress(read, total), onSuccess(bytes), onError(message) }
+-- Writes the response to disk in chunks; buffering the ~1MB export as a Lua
+-- string and decoding it in one callback trips the 10s loop watchdog.
 function Api.download(request)
 	local connection = net.http.new(request.host, request.port, request.useSSL, request.reason)
 	if not connection then
@@ -38,8 +24,7 @@ function Api.download(request)
 	local written = 0
 	local done = false
 
-	-- Both callbacks can plausibly fire on the same failure; the file and the
-	-- connection must only be closed once.
+	-- Both callbacks can fire on the same failure.
 	local function finish(ok, message)
 		if done then return end
 		done = true
@@ -55,8 +40,7 @@ function Api.download(request)
 
 	connection:setHeadersReadCallback(function()
 		local status = connection:getResponseStatus()
-		-- Without this an error page gets written to disk and only fails much
-		-- later, as an unreadable snapshot.
+		-- Otherwise an error page lands on disk as an unreadable snapshot.
 		if status ~= nil and status ~= 200 then
 			finish(false, "server returned " .. status)
 		end

@@ -1,18 +1,5 @@
--- Stop Detail: what's leaving from here, soonest first. The screen you open
--- standing at a stop, so it answers one question -- which bus is next and
--- when -- and nothing else.
---
--- One row per route *and direction*, since a route that passes both ways is
--- two different answers. Only directions with departures still to come today
--- are listed, and only ones you could actually board: a trip that terminates
--- at this stop is dropped, or a terminus shows a board full of buses going
--- out of service.
---
--- Times are relative under the hour ("6m") and absolute beyond it ("14:38"),
--- which is how you actually think about a bus: three minutes is a countdown,
--- three hours is an appointment.
---
--- Scene properties: { stop }.
+-- What is leaving this stop, soonest first, one row per route and direction.
+-- Properties: { stop }.
 
 StopScene = {}
 class("StopScene").extends(NobleScene)
@@ -22,8 +9,7 @@ scene.backgroundColor = Graphics.kColorWhite
 
 local ROW_H <const> = 30
 local MAX_TIMES <const> = 3
--- A headsign narrower than this is useless, so a row drops its later times
--- rather than squeezing the destination out.
+-- Below this the headsign is useless, so a row drops its later times instead.
 local MIN_LABEL_W <const> = 104
 local CRANK_DEGREES_PER_ROW <const> = 12
 
@@ -33,17 +19,14 @@ local grid = nil
 local crankAccumulator = 0
 local favoriteMenuItem = nil
 local builtAtMinute = nil
--- Which departure you were on, per stop, so backing out of a route returns
--- you to it.
+-- Selection per stop, so backing out of a route returns to it.
 local rememberedRows = {}
 
 local function listHeight()
 	return Theme.CONTENT_BOTTOM - Theme.CONTENT_TOP
 end
 
---- As many times as leave the destination readable -- "the next 2 or 3
---- depending on how many fit", decided per row because a long route number
---- and a long headsign both eat into the same width.
+-- As many times as fit while the destination stays readable, decided per row.
 local function labelsThatFit(entry, width)
 	local labelStart = Theme.MARGIN + Theme.badgeWidth(entry.shortName, Theme.FONT_TITLE) + Theme.MARGIN
 	local labels, used = {}, 0
@@ -95,9 +78,7 @@ function scene:init(__sceneProperties)
 	end
 end
 
--- "3m" has to become "2m" on its own, and a departure that has gone has to
--- drop off the board. Rebuilding once a minute is enough for that and cheap
--- enough not to matter (see Store.departuresAtStop).
+-- Rebuilt once a minute so the countdowns tick and gone departures drop off.
 function scene:update()
 	scene.super.update(self)
 	local minute = playdate.getTime().minute
@@ -116,8 +97,7 @@ end
 
 function scene:start()
 	scene.super.start(self)
-	-- The label has to say what pressing it will do, so it is rebuilt each
-	-- time the state changes.
+	-- The label says what pressing it will do, so it is rebuilt on change.
 	local function install()
 		if favoriteMenuItem ~= nil then
 			playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
@@ -183,8 +163,7 @@ scene.inputHandler = {
 	AButtonDown = function()
 		local entry = departures[grid:getSelectedRow()]
 		if entry ~= nil then
-			-- Hand the stop along so the route line opens where you are
-			-- standing rather than at the far end of the route.
+			-- Pass the stop so the route line opens where you are standing.
 			Nav.push(RouteScene, {
 				route = entry.route,
 				dirKey = entry.dirKey,

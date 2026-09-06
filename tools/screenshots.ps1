@@ -1,12 +1,5 @@
-# Renders every screen to a PNG so UI changes can actually be looked at.
-#
-# Builds a throwaway copy of source/ with tools/screenshots/main.lua swapped
-# in as the entry point, runs it in the Simulator (it boots the real engine,
-# walks the nav stack with fake data, and quits on its own), and drops the
-# results in screenshots/. Nothing in source/ is touched.
-#
-#   .\tools\screenshots.ps1              # -> screenshots/
-#   .\tools\screenshots.ps1 -Out other   # -> other/
+# Renders every screen to a PNG in $Out by running tools/screenshots/main.lua
+# in the Simulator on a copy of source/. source/ itself is not touched.
 
 param(
 	[string]$Out = "screenshots"
@@ -32,14 +25,13 @@ $src = Join-Path $build "source"
 Copy-Item (Join-Path $root "source") $src -Recurse
 
 # The harness writes to an absolute path; the Simulator's working directory
-# isn't ours to rely on.
+# is not ours to rely on.
 $harness = Get-Content (Join-Path $PSScriptRoot "screenshots\main.lua") -Raw
 $harness = $harness.Replace("@@OUTPUT_DIR@@", $outDir.Replace("\", "/"))
 Set-Content -Path (Join-Path $src "main.lua") -Value $harness
 
-# Named so it's unmistakable in the Simulator's title bar and recent list:
-# "upload to device" ships whatever the Simulator currently has open, and
-# what it has open after this script runs is the harness, not the app.
+# Named loudly: the Simulator's "upload to device" ships whatever it has
+# open, which after this script is the harness.
 $pdx = Join-Path $build "NOT-THE-APP-screenshot-harness.pdx"
 Write-Host "Building harness..." -ForegroundColor Cyan
 & $pdc $src $pdx
@@ -50,17 +42,16 @@ Write-Host "Running (the Simulator quits itself)..." -ForegroundColor Cyan
 
 $shots = Get-ChildItem $outDir -Filter *.png | Sort-Object Name
 if ($shots.Count -eq 0) {
-	Write-Host "No screenshots written -- the harness never got going." -ForegroundColor Red
+	Write-Host "No screenshots written; the harness never got going." -ForegroundColor Red
 	exit 1
 }
 foreach ($shot in $shots) { Write-Host "  $($shot.Name)" }
 
 if (Test-Path (Join-Path $outDir "ERROR.png")) {
-	Write-Host "Hit a runtime error -- open ERROR.png, it has the message." -ForegroundColor Red
+	Write-Host "Runtime error; the message is in ERROR.png." -ForegroundColor Red
 	exit 1
 }
 Write-Host "$($shots.Count) screenshots in $outDir" -ForegroundColor Green
 
-# Don't leave a harness build sitting on disk for someone to install by
-# mistake. Rebuild it by running this script again.
+# Don't leave a harness build on disk for someone to install by mistake.
 Remove-Item $build -Recurse -Force -ErrorAction SilentlyContinue

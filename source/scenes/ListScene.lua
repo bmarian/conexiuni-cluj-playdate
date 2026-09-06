@@ -1,18 +1,5 @@
--- The scrollable list behind "All routes", "All stops" and the two
--- favourites screens. One scene, four configurations, so they can't drift
--- apart visually.
---
--- Built on playdate.ui.gridview rather than Noble.Menu: Noble.Menu draws
--- every item at once, which is fine for a four-item menu and wrong for a
--- hundred routes. gridview windows and clips for us.
---
--- This is also where favourites are managed: Right favourites the selected
--- row, Left removes it.
---
--- Scene properties: { key, title, items, icon, emptyTitle, emptyDetail,
--- refresh }. `refresh` is for lists whose contents can change while you're
--- looking at them -- the favourites screens, where Left removes the row you
--- are standing on.
+-- One list for All routes, All stops and both favorites screens. Properties:
+-- { key, title, items, icon, emptyIcon, emptyTitle, emptyDetail, refresh }.
 
 ListScene = {}
 class("ListScene").extends(NobleScene)
@@ -23,8 +10,7 @@ scene.backgroundColor = Graphics.kColorWhite
 local ROW_H <const> = 30
 local CRANK_DEGREES_PER_ROW <const> = 12
 
--- Coming back from a detail screen rebuilds this scene from scratch (see
--- lib/nav.lua), so the selected row is remembered per list here.
+-- Scenes are rebuilt on pop, so the selection is kept per list here.
 local selectedRows = {}
 
 local key, title, items, options
@@ -44,11 +30,8 @@ local function open(item)
 	end
 end
 
--- Right favourites, Left removes. Deliberately not a single toggle: from a
--- list you're often adding several in a row, and a toggle means watching the
--- heart to know which way each press went. This way Right always means the
--- same thing. The row's heart mark answers immediately, because rows read
--- Store on every draw.
+-- Right adds, Left removes. Not a toggle: from a list you often add several
+-- in a row, and a toggle means checking the heart before each press.
 local function setFavorite(item, favorite)
 	if item == nil then return end
 	if isRoute(item) then
@@ -66,9 +49,8 @@ function scene:init(__sceneProperties)
 	options = __sceneProperties
 	key = __sceneProperties.key
 	title = __sceneProperties.title
-	-- A refreshable list rebuilds on entry rather than trusting the array it
-	-- was pushed with: coming back here after favouriting something else
-	-- would otherwise show the list as it was when you left.
+	-- A refreshable list rebuilds rather than trust the array it was pushed
+	-- with, which may be stale by the time you come back.
 	if __sceneProperties.refresh ~= nil then
 		items = __sceneProperties.refresh() or {}
 	else
@@ -77,6 +59,7 @@ function scene:init(__sceneProperties)
 	builtAtRevision = Store.favoritesRevision
 	crankAccumulator = 0
 
+	-- gridview windows and clips; Noble.Menu draws every item at once.
 	grid = UI.gridview.new(0, ROW_H) -- cell width 0 = full width
 	grid:setNumberOfRows(math.max(1, #items))
 	grid.scrollCellsToCenter = false
@@ -107,8 +90,8 @@ function scene:init(__sceneProperties)
 	end
 end
 
--- A favourites list has to drop a row the moment it stops being a favourite,
--- or Left appears to do nothing.
+-- A favorites list has to drop a row as soon as it stops being one, or Left
+-- appears to do nothing.
 function scene:update()
 	scene.super.update(self)
 	if options.refresh == nil or Store.favoritesRevision == builtAtRevision then return end

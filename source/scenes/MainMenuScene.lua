@@ -1,10 +1,5 @@
--- Main Menu: how old the snapshot is, and four ways in -- your favourite
--- routes, your favourite stops, and the full lists of each.
---
--- Favourites get their own screens rather than being listed here. An earlier
--- version put them inline with their next departures, which read as a wall of
--- numbers on a 400x240 screen; the counts belong here and the detail belongs
--- one press away.
+-- Snapshot age, and four ways in: favorite routes, favorite stops, and the
+-- full lists of each.
 
 MainMenuScene = {}
 class("MainMenuScene").extends(NobleScene)
@@ -18,15 +13,14 @@ local ROW_H <const> = 34
 local rows = {}
 local grid = nil
 local builtAtRevision = nil
--- Survives leaving and coming back, the way the list screens remember theirs.
+-- Kept across visits.
 local selectedRow = 1
 
 local function listTop()
 	return Theme.CONTENT_TOP + BANNER_H
 end
 
--- Each row carries its own action, so the input handler doesn't need to know
--- what the menu is made of.
+-- Each row carries its own action.
 local function buildRows()
 	rows = {
 		{
@@ -117,7 +111,6 @@ end
 
 function scene:update()
 	scene.super.update(self)
-	-- The counts are the only live thing here, so this is cheap.
 	if Store.favoritesRevision ~= builtAtRevision then refresh() end
 end
 
@@ -159,7 +152,7 @@ scene.inputHandler = {
 		if entry ~= nil then entry.open() end
 	end,
 	BButtonDown = function()
-		-- Root screen: there's nothing to go back to, so B re-syncs.
+		-- Nothing to go back to at the root.
 		Nav.reset(SyncScene)
 	end,
 }

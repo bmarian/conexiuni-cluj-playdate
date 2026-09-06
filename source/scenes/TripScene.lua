@@ -1,12 +1,5 @@
--- One departure, stop by stop: pick "the 13:37" in the timetable and this
--- says what time it reaches every stop on the way. The web app's most-used
--- view, and the reason the export carries `hourly_offset_seconds` at all.
---
--- Purely schedule math against the snapshot -- departure time plus that
--- stop's cumulative offset for the departure's hour. No live data, same as
--- everywhere else in this app.
---
--- Scene properties: { route, dirKey, departure = "13:37" }.
+-- One departure, stop by stop: its time plus each stop's cumulative offset.
+-- Properties: { route, dirKey, departure = "13:37" }.
 
 TripScene = {}
 class("TripScene").extends(NobleScene)
@@ -36,14 +29,12 @@ local function parseHHMM(s)
 end
 
 local function formatClock(seconds)
-	-- A late trip can run past midnight; wrap rather than printing "24:10".
+	-- A late trip can run past midnight.
 	seconds = seconds % (24 * 3600)
 	return string.format("%02d:%02d", seconds // 3600, (seconds % 3600) // 60)
 end
 
--- Builds one row per stop. The offsets are the ones for the hour the trip
--- departs in, not the current hour -- this screen is about that departure,
--- which may be hours away.
+-- Offsets for the hour the trip departs in, not the current hour.
 local function buildCalls()
 	calls = {}
 
@@ -56,9 +47,8 @@ local function buildCalls()
 	local offsets = Store.offsetsForHour(direction, departureSeconds // 3600)
 	if offsets == nil then return end
 
-	-- Only mark a "you are here" stop while this trip is actually running.
-	-- Without the upper bound every finished trip marks its last stop, since
-	-- "elapsed is past the final offset" is true for the rest of the day.
+	-- Without the upper bound every finished trip marks its last stop for the
+	-- rest of the day.
 	local now = playdate.getTime()
 	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
 	local elapsed = nowSeconds - departureSeconds
@@ -93,7 +83,7 @@ function scene:init(__sceneProperties)
 	grid.scrollCellsToCenter = false
 	grid:setScrollDuration(120)
 
-	-- Open on the stop the bus should be at, when the trip is under way.
+	-- Open on the stop the bus should be at.
 	for index, call in ipairs(calls) do
 		if call.isNow then
 			grid:setSelectedRow(index)
@@ -109,8 +99,8 @@ function scene:init(__sceneProperties)
 			icon = call.isNow and "bus" or "map-pin",
 			label = call.stopName,
 			accessory = call.timeLabel,
-			-- The times are the whole point of this screen, so they get the
-			-- body face rather than the small one accessories usually take.
+			-- The times are the point of this screen, so they get the body
+			-- face rather than the small one accessories usually take.
 			accessoryFont = Theme.FONT_BODY,
 			width = width,
 		})
@@ -130,8 +120,7 @@ function scene:drawBackground()
 	scene.super.drawBackground(self)
 
 	Theme.header({
-		-- The raw value can be "25:05"; that's the right thing to do the
-		-- maths with and the wrong thing to show anybody.
+		-- The raw value can be "25:05".
 		title = "Departing " .. Text.clockLabel(departure),
 		badge = Text.clean(route.route_short_name),
 		icon = "clock",

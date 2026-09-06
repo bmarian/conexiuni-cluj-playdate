@@ -1,15 +1,5 @@
--- Local data: the synced transit snapshot and favorites.
---
--- The snapshot is a ~1MB JSON file the sync streams straight to disk (see
--- lib/api.lua) and this decodes once, at load. It deliberately does NOT go
--- through playdate.datastore: datastore.write re-encodes the whole table to
--- JSON, and doing that to a megabyte of routes blocked the update loop long
--- enough for the device to report "loop stalled for more than 10s". The
--- datastore is still the right home for the small stuff -- favourites, and
--- when the last sync happened -- which is what it's used for here.
---
--- See AGENTS.md "Networking" -- sync is the only time this app touches the
--- network.
+-- The ~1MB snapshot is a plain file decoded once at load, not a datastore
+-- entry: datastore.write re-encodes the table and trips the 10s watchdog.
 
 Store = Store or {}
 
@@ -18,12 +8,9 @@ Store.SYNC_PORT = 443
 Store.SYNC_USE_SSL = true
 Store.SYNC_PATH = "/api/playdate/export"
 
--- The snapshot, and the partial file a download writes before it's promoted.
 local DATA_PATH <const> = "snapshot.json"
 local DOWNLOAD_PATH <const> = "snapshot.download"
--- playdate.datastore.write(t, "name") produces "name.json"; this is the file
--- the pre-streaming version of sync left behind, worth reclaiming a megabyte
--- from on the first launch after upgrading.
+-- Left behind by the pre-streaming sync; deleted on the next launch.
 local LEGACY_DATA_PATH <const> = "transit_data.json"
 
 local META_FILE <const> = "sync_meta"
@@ -31,18 +18,13 @@ local FAVORITES_FILE <const> = "favorites"
 
 Store.data = nil     -- { generated_at, routes = {...}, stops = {...} }
 Store.syncedAt = nil -- epoch seconds of the last successful sync
--- Arrays of ids, not sets. A set keyed by number survives neither
--- json.encode (which turns the keys into strings) nor the round trip back,
--- and there are never enough favourites for a linear scan to matter.
+-- Arrays, not sets: json.encode turns number keys into strings.
 Store.favorites = { routes = {}, stops = {} }
--- Bumped on every change. The Main Menu caches its rows (a favourite stop's
--- departures are too expensive to recompute per frame) and watches this to
--- know when that cache is stale, whoever changed them.
+-- Watched by screens that cache rows built from favorites.
 Store.favoritesRevision = 0
 
--- load() reads whatever was persisted from a previous sync. Returns true if
--- there is data to browse. The decode is the one expensive thing this app
--- does; it happens here, at launch, rather than inside a frame.
+-- True if there is data to browse. The decode is slow, so it runs at launch
+-- rather than inside a frame.
 function Store.load()
 	Store.loadFavorites()
 
@@ -60,16 +42,12 @@ function Store.load()
 
 	local ok, decoded = pcall(json.decodeFile, DATA_PATH)
 	if not ok or decoded == nil or decoded.routes == nil then
-		-- A truncated or corrupt snapshot is worth throwing away: the app
-		-- will offer a re-sync rather than half-browsing it.
 		playdate.file.delete(DATA_PATH)
 		Store.data = nil
 		return false
 	end
 
-	-- The export arrives in the backend's order, which is neither numeric for
-	-- routes nor alphabetical for stops. Sorting once here means every screen
-	-- and every count agrees, rather than each list sorting its own way.
+	-- The export arrives in the backend's order.
 	Store.sortInPlace(decoded.routes, function(route) return route.route_short_name end)
 	Store.sortInPlace(decoded.stops, function(stop) return stop.stop_name end)
 
@@ -77,8 +55,7 @@ function Store.load()
 	return true
 end
 
--- Decorate-sort-undecorate: Text.sortKey strips diacritics and pads numbers,
--- which is far too much work to redo on every comparison of 793 stops.
+-- Decorate-sort-undecorate; Text.sortKey is too slow to redo per comparison.
 function Store.sortInPlace(items, fieldOf)
 	if items == nil then return end
 
@@ -89,10 +66,8 @@ function Store.sortInPlace(items, fieldOf)
 	table.sort(items, function(a, b) return keys[a] < keys[b] end)
 end
 
--- sync() downloads a fresh snapshot to disk. onDownloaded(ok, errorMessage)
--- fires when the bytes are safely stored; the caller then calls Store.load()
--- to decode them -- on its own frame, so the screen can say what it's doing
--- instead of freezing mid-download.
+-- onDownloaded(ok, err) fires once the bytes are stored; the caller decodes
+-- with Store.load() on a later frame so the screen can repaint in between.
 function Store.sync(onProgress, onDownloaded)
 	Api.download({
 		host = Store.SYNC_HOST,
@@ -103,8 +78,7 @@ function Store.sync(onProgress, onDownloaded)
 		destination = DOWNLOAD_PATH,
 		onProgress = onProgress,
 		onSuccess = function()
-			-- Promote the download only once it's complete, so a failed sync
-			-- leaves the previous snapshot intact rather than truncating it.
+			-- Promote only when complete, so a failed sync keeps the old one.
 			if playdate.file.exists(DATA_PATH) then
 				playdate.file.delete(DATA_PATH)
 			end
@@ -123,8 +97,7 @@ function Store.sync(onProgress, onDownloaded)
 	})
 end
 
--- syncedAgoText() is a short "synced Nh ago" string for the Main Menu banner,
--- and whether it's stale enough to recommend a re-sync (>24h).
+-- Returns the label and whether it is stale (>24h).
 function Store.syncedAgoText()
 	if Store.syncedAt == nil then
 		return "never synced", true
@@ -160,9 +133,7 @@ function Store.findStop(stopId)
 	return nil
 end
 
---- Reads favourites, upgrading the one-route-one-stop file older builds
---- wrote. Kept separate from the snapshot: favourites are small, personal,
---- and must survive a failed or skipped sync.
+-- Kept out of the snapshot so favorites survive a failed or skipped sync.
 function Store.loadFavorites()
 	local stored = playdate.datastore.read(FAVORITES_FILE)
 	Store.favorites = { routes = {}, stops = {} }
@@ -214,8 +185,7 @@ function Store.toggleFavoriteStop(stopId)
 	toggle(Store.favorites.stops, stopId)
 end
 
---- Favourited routes/stops as objects, in the snapshot's order, skipping ids
---- that a later sync dropped.
+-- Skips ids a later sync dropped.
 function Store.favoriteRoutes()
 	local result = {}
 	for _, id in ipairs(Store.favorites.routes) do
@@ -247,15 +217,11 @@ local function stopIndexIn(direction, stopId)
 	return nil
 end
 
--- The next few calls at one stop for one route/direction. The time is the
--- trip's departure plus this stop's cumulative offset -- the route's origin
--- time is not what you want when you're standing halfway along it.
+-- Times are the trip's departure plus this stop's cumulative offset.
 local function upcomingCalls(stopId, direction, dirKey, day, nowSeconds, maxTimes)
 	local index = stopIndexIn(direction, stopId)
 	if index == nil then return nil end
-	-- The last stop is where the trip ends. Standing at a terminus, half the
-	-- board would otherwise be buses arriving to go out of service -- real
-	-- times, but you can't get on one.
+	-- Trips end at the last stop; nothing to board there.
 	if index == #direction.stops then return nil end
 
 	local field = (dirKey == "out") and "departure_out" or "departure_in"
@@ -270,9 +236,7 @@ local function upcomingCalls(stopId, direction, dirKey, day, nowSeconds, maxTime
 				if offset ~= nil then
 					local arrival = departure + offset
 					local away = arrival - nowSeconds
-					-- A night departure is published as "25:05"; against a
-					-- clock that already rolled past midnight it looks like
-					-- most of a day ago, so bring it back.
+					-- Night departures are published as "25:05".
 					if away < -12 * 3600 then away = away + 24 * 3600 end
 					if away >= 0 then
 						table.insert(calls, { away = away, arrival = arrival })
@@ -288,13 +252,8 @@ local function upcomingCalls(stopId, direction, dirKey, day, nowSeconds, maxTime
 	return calls
 end
 
---- Everything still to leave a stop today, soonest first, as
---- { route, dirKey, headsign, shortName, calls = {{away, arrival}, ...} }.
----
---- Scans every route's two directions rather than keeping a permanent
---- stop->routes index: the busiest stop in the export (31 route/direction
---- pairs) measured 2ms in the Simulator, and the snapshot is already the big
---- thing in memory.
+-- Soonest first, as { route, dirKey, headsign, shortName, calls }. The full
+-- scan measures 2ms at the busiest stop, so there is no stop->routes index.
 function Store.departuresAtStop(stopId, maxTimes)
 	local departures = {}
 	if Store.data == nil then return departures end
@@ -324,13 +283,11 @@ function Store.departuresAtStop(stopId, maxTimes)
 		end
 	end
 
-	-- Soonest first: this is a departure board, not a route index.
 	table.sort(departures, function(a, b) return a.calls[1].away < b.calls[1].away end)
 	return departures
 end
 
--- Which of the timetable's three service days applies right now.
--- Sunday=7, Saturday=6, Monday..Friday=1..5 (playdate.getTime() convention).
+-- playdate.getTime() numbers Monday..Sunday as 1..7.
 function Store.scheduleKeyForToday()
 	local weekday = playdate.getTime().weekday
 	if weekday == 7 then return "sunday" end
@@ -338,12 +295,8 @@ function Store.scheduleKeyForToday()
 	return "weekdays"
 end
 
--- The export ships one cumulative-offset array per hour of the day
--- (`hourly_offset_seconds`), because segment travel times vary by time of day
--- and a snapshot is browsed for up to a day after it's synced. Route Detail
--- wants the array for the hour it is right now; hours with no service are
--- absent from the table, so fall back to the nearest one that is present
--- rather than assuming all 24 exist.
+-- Offsets are per hour of the day, and hours without service are missing, so
+-- fall back to the nearest hour present.
 function Store.offsetsForHour(direction, hour)
 	local hourly = direction ~= nil and direction.hourly_offset_seconds or nil
 	if hourly == nil then return nil end

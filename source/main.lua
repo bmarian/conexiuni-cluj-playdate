@@ -1,7 +1,3 @@
--- Entry point. Noble Engine owns the update loop, scene lifecycle and input
--- routing (see AGENTS.md "App Architecture"); lib/nav.lua adds the back stack
--- on top of it, and lib/theme.lua owns every visual decision.
-
 import "libraries/noble/Noble"
 
 import "lib/text"
@@ -21,7 +17,7 @@ import "scenes/StopScene"
 
 Noble.Text.setFont(Theme.FONT_BODY)
 
--- Nothing to browse until the first sync has happened.
+-- Nothing to browse until the first sync.
 if Store.load() then
 	Nav.start(MainMenuScene)
 else

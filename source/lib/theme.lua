@@ -1,53 +1,29 @@
--- The app's one and only set of visual decisions: four fonts with fixed
--- roles, a fixed header/content/footer split, and the handful of widgets
--- every scene is built out of (rows, badges, button hints, scrollbars).
---
--- Scenes are not allowed their own type scale or their own chrome. If a
--- screen needs something new, it goes in here so every screen gets it --
--- that is the whole point of the file. Named `Theme` because Noble Engine
--- already claims the global `UI` (it aliases `playdate.ui`).
---
--- Everything that measures text measures it in the font it will actually be
--- drawn in, and every label is truncated to the space it actually has, so
--- two labels can't collide no matter how long the synced name turns out to
--- be. `Graphics.drawTextAligned` does no clipping of its own.
+-- Fonts, layout constants and the widgets every scene draws itself out of.
+-- Named Theme because Noble already claims the global UI (playdate.ui).
 
 Theme = Theme or {}
 
--- Fonts, by role. Nothing draws text without picking one of these.
 Theme.FONT_TITLE = Graphics.font.new("fonts/Roobert-11-Bold")       -- headers, badges, selected rows
 Theme.FONT_BODY = Graphics.getSystemFont()                          -- list rows, timetable cells
 Theme.FONT_BIG = Graphics.font.new("fonts/Asheville-Sans-14-Bold")  -- stop names on the route line
 Theme.FONT_SMALL = Noble.Text.FONT_SMALL                            -- footer hints, chips, "3m" labels
 
--- Layout. The header and footer are the same height on every scene; content
--- lives strictly between them.
--- (Table fields, so no <const>: Lua 5.4 only allows that on locals.)
+-- Table fields, so no <const>: Lua 5.4 allows that on locals only.
 Theme.WIDTH = 400
 Theme.HEIGHT = 240
--- 32 leaves 6px of air around a 20px badge; at 28 the badge filled the bar
--- edge to edge and sat right on the divider.
+-- 6px of air around a 20px badge.
 Theme.HEADER_H = 32
 Theme.CONTENT_TOP = 33
--- The footer only holds one 9px row of hints, so it gives 4px back to the
--- content -- which is what keeps the timetable at seven visible hours
--- despite the taller header.
 Theme.CONTENT_BOTTOM = 213
 Theme.FOOTER_Y = 214
 Theme.MARGIN = 8
 
---- Height available between the header rule and the footer rule.
 function Theme.contentHeight()
 	return Theme.CONTENT_BOTTOM - Theme.CONTENT_TOP
 end
 
--- Where the glyphs actually sit inside each font's line box, measured by
--- rendering digits offscreen and scanning for ink (tools/screenshots can
--- reproduce it; the numbers are in AGENTS.md). getHeight() is the whole box
--- including leading -- 22px for an 11px-looking Roobert -- so sizing a badge
--- from it produced a box as tall as the entire header and taller than a
--- timetable row. The ink is also consistently a couple of pixels above the
--- box's middle, so centering on getHeight() alone draws every label high.
+-- Where the glyphs sit inside each font's line box, measured offscreen (see
+-- AGENTS.md). getHeight() includes leading: 22px for an 11px Roobert.
 local INK = {
 	[Theme.FONT_TITLE] = { top = 2, height = 15 },
 	[Theme.FONT_BODY] = { top = 1, height = 14 },
@@ -62,18 +38,12 @@ local function inkOf(font)
 	return { top = 0, height = height }
 end
 
---- Draws `text` with the *ink* vertically centered on `centerY`
---- (drawTextAligned takes a box top edge, and every widget here thinks in
---- centers). Centering the ink rather than the box is what keeps a label
---- looking level inside a badge, a filled row or the footer.
+-- Centers the ink, not the line box, on centerY.
 function Theme.textCentered(text, x, centerY, alignment, font)
 	local ink = inkOf(font)
 	Noble.Text.draw(text, x, centerY - ink.top - ink.height // 2, alignment, false, font)
 end
 
---- Width Theme.badge will take for this text, for callers that need to
---- center one or lay out around it before drawing.
---- Height of a badge drawn in this font. Sized to the glyphs, not the leading.
 function Theme.badgeHeight(font)
 	return inkOf(font or Theme.FONT_TITLE).height + 8
 end
@@ -83,9 +53,7 @@ function Theme.badgeWidth(text, font)
 	return math.max(font:getTextWidth(text) + 12, Theme.badgeHeight(font))
 end
 
---- A rounded outline box around short text -- route numbers, day tabs, the
---- "3m" chips on the route line. Returns its width so callers can lay out
---- what follows. Draws in white when `white` is true, for use on a filled row.
+-- Rounded outline box around short text. Returns its width.
 function Theme.badge(x, centerY, text, font, white)
 	font = font or Theme.FONT_TITLE
 	local height = Theme.badgeHeight(font)
@@ -103,12 +71,7 @@ function Theme.badge(x, centerY, text, font, white)
 	return width
 end
 
---- The header: an optional badge on the left, a centered title, an optional
---- icon on the right, and the rule that separates it from the content. Every
---- scene calls this first, with the same shape, so the top of the screen
---- never moves between screens.
----
---- opts: { title, badge, icon }
+-- opts: { title, badge, icon }
 function Theme.header(opts)
 	local centerY = Theme.HEADER_H // 2
 	local left = Theme.MARGIN
@@ -122,8 +85,7 @@ function Theme.header(opts)
 		right = right + 24 + Theme.MARGIN
 	end
 
-	-- The title is centered in what's left over and truncated to it, so it
-	-- can never run under the badge or the icon.
+	-- Centered in what is left, so the title cannot run under badge or icon.
 	local available = Theme.WIDTH - left - right
 	local title = Text.truncateToWidth(Text.clean(opts.title or ""), available, Theme.FONT_TITLE)
 	Theme.textCentered(title, left + available // 2, centerY, kTextAlignment.center, Theme.FONT_TITLE)
@@ -133,9 +95,7 @@ function Theme.header(opts)
 	Graphics.drawLine(0, Theme.HEADER_H, Theme.WIDTH, Theme.HEADER_H)
 end
 
--- Button hints. The Playdate's Ⓐ/Ⓑ glyphs only exist in some fonts, so the
--- chips are drawn rather than typed -- that way the footer looks identical
--- whichever font a scene happens to be using.
+-- The A/B glyphs only exist in some fonts, so the chips are drawn.
 local CHIP <const> = 16
 
 local function drawChip(x, centerY, letter)
@@ -146,9 +106,7 @@ local function drawChip(x, centerY, letter)
 	Graphics.setImageDrawMode(Graphics.kDrawModeCopy)
 end
 
--- A hint's leading glyph is either an A/B chip or one or two d-pad chevrons.
--- Single chevrons are for when the two directions do different things --
--- Right favourites, Left removes -- rather than being two ends of one axis.
+-- Single chevrons are for when the two directions do different things.
 local HINT_GLYPHS <const> = {
 	leftRight = { "chevron-left", "chevron-right" },
 	upDown = { "chevron-up", "chevron-down" },
@@ -168,9 +126,7 @@ local function hintWidth(hint)
 	return hintGlyphWidth(hint) + 4 + Theme.FONT_SMALL:getTextWidth(hint.label)
 end
 
---- The footer: the rule, then a centered row of control hints.
---- hints: an array of { button = "A"|"B", label = "..." } or
---- { pad = "leftRight"|"upDown", label = "..." }.
+-- hints: { button = "A"|"B", label } or { pad = "leftRight"|..., label }.
 function Theme.footer(hints)
 	Graphics.setColor(Graphics.kColorBlack)
 	Graphics.setLineWidth(1)
@@ -200,24 +156,8 @@ function Theme.footer(hints)
 	end
 end
 
---- One full-width list row, the shared building block of every list on every
---- screen: optional icon, optional badge, label, optional right-hand
---- accessory text. The label gets whatever horizontal space the other three
---- leave it and is truncated to exactly that, so rows never collide.
----
---- `width` defaults to the full screen; pass the cell width when the list is
---- drawn narrower (to leave room for a scrollbar), or the accessory ends up
---- drawn past the clip and loses its last character.
----
---- `accessories` is a right-aligned group of short strings, soonest first,
---- for rows that carry several values (the next few departures at a stop).
---- The first is boxed, because it's the one that matters.
----
---- `markIcon` is a 12px mark at the right edge -- a favourite heart on a
---- list row -- placed outside the label so rows stay aligned whether or not
---- they carry one.
----
---- opts: { icon, badge, label, accessory, accessories, markIcon, font, accessoryFont, width }
+-- opts: { icon, badge, label, accessory, accessories, markIcon, font,
+-- accessoryFont, width }. `width` must be the cell width, not the screen.
 function Theme.row(y, height, selected, opts)
 	local centerY = y + height // 2
 	local font = opts.font or Theme.FONT_BODY
@@ -240,8 +180,8 @@ function Theme.row(y, height, selected, opts)
 		if selected then Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite) end
 	end
 
-	-- Everything on the right is placed from the right edge inward; whatever
-	-- is left over is the label's, and it gets truncated to exactly that.
+	-- Right-hand items are placed inward from the edge; the label takes what
+	-- is left and is truncated to it.
 	local labelRight = width - Theme.MARGIN
 
 	if opts.markIcon ~= nil then
@@ -256,7 +196,7 @@ function Theme.row(y, height, selected, opts)
 	end
 
 	if opts.accessories ~= nil then
-		-- Drawn back to front so the soonest still ends up leftmost.
+		-- Back to front, so the soonest ends up leftmost.
 		for i = #opts.accessories, 2, -1 do
 			local label = opts.accessories[i]
 			Theme.textCentered(label, labelRight, centerY, kTextAlignment.right, Theme.FONT_SMALL)
@@ -281,8 +221,7 @@ function Theme.row(y, height, selected, opts)
 	Graphics.setColor(Graphics.kColorBlack)
 end
 
---- Vertical scrollbar for a list: a hairline track with a solid thumb sized
---- to the fraction of rows on screen. Nothing is drawn when it all fits.
+-- Nothing is drawn when everything fits.
 function Theme.scrollbarV(x, y, height, first, visible, total)
 	if total <= visible then return end
 
@@ -296,8 +235,6 @@ function Theme.scrollbarV(x, y, height, first, visible, total)
 	Graphics.fillRoundRect(x, y + offset, 5, thumb, 2)
 end
 
---- Horizontal equivalent, used by the route line to show where along the
---- route the visible window sits.
 function Theme.scrollbarH(x, y, width, offset, visible, total)
 	if total <= visible then return end
 
@@ -311,9 +248,7 @@ function Theme.scrollbarH(x, y, width, offset, visible, total)
 	Graphics.fillRoundRect(x + position, y, thumb, 5, 2)
 end
 
---- A determinate progress bar: outlined track, solid fill. `fraction` is
---- 0..1 and is clamped, since a server's byte count and what we've actually
---- written don't have to agree.
+-- `fraction` is clamped: the server's byte count and ours need not agree.
 function Theme.progressBar(x, y, width, fraction)
 	local height = 10
 	fraction = math.max(0, math.min(1, fraction or 0))
@@ -327,7 +262,6 @@ function Theme.progressBar(x, y, width, fraction)
 	end
 end
 
---- Centered icon-over-message block, for every "there's nothing here" state.
 function Theme.emptyState(icon, message, detail)
 	local centerY = (Theme.CONTENT_TOP + Theme.CONTENT_BOTTOM) // 2
 	if icon ~= nil then

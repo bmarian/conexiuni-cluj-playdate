@@ -1,11 +1,5 @@
--- The only screen that touches the network: downloads the offline snapshot,
--- then hands off to the Main Menu. Everything after this reads local data.
---
--- The work is split into visible phases on purpose. The export is ~1MB, so
--- there are two slow steps -- pulling it down, and decoding it -- and each
--- gets its own state with something on screen. In particular the decode runs
--- a frame *after* the screen says it's happening, so the device isn't left
--- looking frozen on "Downloading" while it parses a megabyte of JSON.
+-- Downloads the snapshot, then hands off to the main menu. The only screen
+-- that touches the network.
 
 SyncScene = {}
 class("SyncScene").extends(NobleScene)
@@ -40,8 +34,8 @@ local function startSync()
 				detail = tostring(err)
 				return
 			end
-			-- Downloaded, not yet readable. Let the "Reading timetable"
-			-- frame actually paint before spending seconds in json.decode.
+			-- Let the "Reading timetable" frame paint before json.decode
+			-- blocks for seconds.
 			phase = READING
 			decodeAtFrame = frames + 2
 		end
@@ -80,10 +74,9 @@ local function statusText()
 	if phase == FAILED then return "Sync failed" end
 	if phase == READING then return "Reading timetable" end
 	-- DNS, TLS and the server building the export take about four seconds
-	-- before a single byte arrives -- most of the wait. Saying "Downloading"
-	-- through all of it, with a progress bar stuck at zero, looks broken.
+	-- before the first byte, which is most of the wait.
 	local label = bytesRead > 0 and "Downloading" or "Connecting"
-	-- One dot per half second, so a slow connection still looks alive.
+	-- One dot per half second.
 	return label .. string.rep(".", (frames // 15) % 4)
 end
 

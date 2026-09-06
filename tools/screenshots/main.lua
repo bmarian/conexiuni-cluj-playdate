@@ -1,17 +1,5 @@
--- Screenshot harness. Not part of the shipped app -- `tools/screenshots.ps1`
--- copies source/ to a temp folder, drops this in as main.lua, builds it and
--- runs it. It boots Noble Engine for real against fake data, walks the whole
--- nav stack a step at a time, and writes a PNG of the actual display at each
--- stop along the way, then quits.
---
--- Why bother: every scene draws itself with unclipped text calls, so layout
--- bugs (labels colliding, a name running under an icon) are invisible until
--- someone looks at a render. And booting for real is what catches the engine
--- wiring -- transitions, scene lifecycle, redraw config -- that a static
--- render of drawBackground would happily paper over.
---
--- The Simulator's console isn't reachable from a script, so any error is
--- rendered into ERROR.png instead of vanishing.
+-- Screenshot harness, run by tools/screenshots.ps1: boots the engine against
+-- fake data, walks the nav stack shooting each screen, then quits.
 
 import "libraries/noble/Noble"
 
@@ -32,11 +20,8 @@ import "scenes/StopScene"
 
 Noble.Text.setFont(Theme.FONT_BODY)
 
--- `playdate.simulator` doesn't exist on hardware, and every screenshot below
--- goes through it. If this build ends up on a device -- easy to do by
--- accident, since the Simulator's "upload to device" ships whatever it
--- currently has open, and running this leaves the harness open -- say so
--- instead of dying on a nil index at the first screenshot.
+-- playdate.simulator does not exist on hardware, and this build is easy to
+-- install by accident (see tools/screenshots.ps1).
 if playdate.simulator == nil then
 	function playdate.update()
 		Graphics.clear(Graphics.kColorWhite)
@@ -50,8 +35,8 @@ end
 -- Substituted by tools/screenshots.ps1.
 local OUT <const> = "@@OUTPUT_DIR@@/"
 
--- Real Cluj stop names, diacritics included: they're the worst case for both
--- Text.clean and the route line's label boxes.
+-- Real stop names, diacritics included: the worst case for Text.clean and for
+-- the route line's label boxes.
 local stopNames <const> = {
 	"Izlazului", "Calea Mănăștur", "Agronomia", "Calea Moților",
 	"Memorandumului Sud", "Victoria", "Regionala CFR", "Piața 1 Mai Sosire",
@@ -71,9 +56,8 @@ end
 
 local entries = {}
 for hour = 5, 23 do
-	-- 07:00 gets twelve departures: that's the densest hour in the real data
-	-- (route 25 on a weekday), and the case the timetable grid's column
-	-- pitch has to survive.
+	-- Twelve departures at 07:00, the densest hour in the real data and the
+	-- case the timetable grid's column pitch has to survive.
 	local minutes = hour == 7
 		and { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55 }
 		or { 5, 25, 45 }
@@ -90,8 +74,8 @@ local timetable <const> = {
 	sunday = { entries = entries },
 }
 
--- A night route: CTP publishes past-midnight departures as 24:xx / 25:xx so
--- they keep sorting after 23:00. They have to *draw* as 00 and 01.
+-- Past-midnight departures are published as 24:xx / 25:xx and have to draw
+-- as 00 and 01.
 local nightTimetable <const> = {
 	weekdays = { entries = {
 		{ departure_out = "23:00", departure_in = "23:05" },
@@ -100,8 +84,7 @@ local nightTimetable <const> = {
 		{ departure_out = "24:35", departure_in = "24:40" },
 		{ departure_out = "25:05", departure_in = "25:10" },
 	} },
-	-- No weekend service at all: the case where the grid is empty and focus
-	-- has to fall back to the tabs or the screen traps you.
+	-- No weekend service: the case where focus has to fall back to the tabs.
 	saturday = { entries = {} },
 	sunday = { entries = {} },
 }
@@ -117,15 +100,12 @@ local route <const> = {
 	timetable = timetable,
 }
 
--- Deliberately in the order the backend sends them, and using the shapes
--- that break a plain string sort: "25N" belongs after "25", "100" after "99",
--- and the M-prefixed metropolitan routes after all of those.
+-- In backend order, with the shapes that break a plain string sort.
 local shortNames <const> = {
 	"102L", "25", "9", "M11", "100", "5N", "25N", "1", "M9", "43B",
 	"26", "101", "8L", "A1", "M21", "3", "50D", "102", "12", "57L",
 }
--- Each route runs a few minutes off the last, so Stop Detail has something
--- real to sort by instead of 40 identical rows.
+-- Offset each route from the last, so StopScene has something to sort.
 local function shiftedTimetable(shiftMinutes)
 	local shifted = {}
 	for _, entry in ipairs(entries) do
@@ -171,8 +151,7 @@ Store.data = { routes = routes, stops = stops }
 Store.syncedAt = playdate.getSecondsSinceEpoch() - 35 * 60
 Store.favorites = { routes = {}, stops = {} }
 
--- Store.load() does this after decoding a real snapshot; the harness injects
--- its data directly, so it has to sort it the same way to be representative.
+-- Store.load() sorts after decoding; injected data has to match.
 Store.sortInPlace(Store.data.routes, function(r) return r.route_short_name end)
 Store.sortInPlace(Store.data.stops, function(st) return st.stop_name end)
 
@@ -182,8 +161,7 @@ local function shoot(name)
 	playdate.simulator.writeToFile(Graphics.getDisplayImage(), OUT .. name .. ".png")
 end
 
--- Renders a scene that the walk doesn't reach (Sync only exists while the
--- network call is in flight) without letting it run its enter() hook.
+-- Renders a scene the walk cannot reach, without running its enter() hook.
 local function shootDetached(name, scene)
 	local image = Graphics.image.new(400, 240)
 	Graphics.pushContext(image)
@@ -192,19 +170,11 @@ local function shootDetached(name, scene)
 	playdate.simulator.writeToFile(image, OUT .. name .. ".png")
 end
 
--- Input handlers are called directly: Noble.Input polls real button state,
--- which a script can't fake. Everything else -- transitions, the nav stack,
--- the scene lifecycle -- runs for real.
---
--- Steps are a plain ordered list, not a frame-number table. Noble's
--- transitions run on wall-clock time while a script counts frames, so any
--- fixed frame spacing is a bet on the Simulator's frame rate; the driver
--- below waits for the transition to actually finish instead. Add a step here
--- when you add a screen.
+-- Input handlers are called directly; Noble.Input polls real button state,
+-- which a script cannot fake.
 local steps <const> = {
 	function() shoot("01-mainmenu-no-favorites") end,
-	-- Favourite two stops the way a player does: from the browse list, Right
-	-- to add. The heart mark has to appear on the row straight away.
+	-- Favorite two stops from the browse list; the heart has to appear at once.
 	function()
 		-- All stops is the last of the four fixed rows.
 		for _ = 1, 20 do MainMenuScene.inputHandler.downButtonDown() end
@@ -222,17 +192,16 @@ local steps <const> = {
 	function() ListScene.inputHandler.leftButtonDown() end,
 	function() shoot("03-stoplist-removed") end,
 	function() ListScene.inputHandler.BButtonDown() end,
-	-- Back on the menu, the counts have moved.
+	-- The counts have moved.
 	function() shoot("04-mainmenu-counts") end,
-	-- Into the favourites screen itself: second of the four fixed rows.
+	-- Into the favorites screen: second of the four fixed rows.
 	function()
 		for _ = 1, 20 do MainMenuScene.inputHandler.upButtonDown() end
 		MainMenuScene.inputHandler.downButtonDown()
 		MainMenuScene.inputHandler.AButtonDown()
 	end,
 	function() shoot("05-favorite-stops") end,
-	-- Removing the last one from inside the favourites list has to empty it
-	-- there and then, not on the next visit.
+	-- Removing the last one has to empty the list there and then.
 	function() ListScene.inputHandler.leftButtonDown() end,
 	function() shoot("06-favorite-stops-emptied") end,
 	function() ListScene.inputHandler.BButtonDown() end,
@@ -248,24 +217,21 @@ local steps <const> = {
 		ListScene.inputHandler.AButtonDown()
 	end,
 	function() shoot("08-route") end,
-	-- Pan into the middle of the line, where labels have neighbours on both
-	-- sides and the most room to collide.
+	-- The middle of the line, where labels have neighbours on both sides.
 	function() for _ = 1, 4 do RouteScene.inputHandler.rightButtonDown() end end,
 	function() shoot("09-route-panned") end,
 	function() RouteScene.inputHandler.upButtonDown() end,
 	function() shoot("10-route-other-direction") end,
 	function() RouteScene.inputHandler.AButtonDown() end,
 	function() shoot("11-timetable") end,
-	-- The timetable opens on the current hour, not the top, so "hold Up" is
-	-- how you actually reach the tab strip. It stops there rather than
-	-- wrapping, which makes this deterministic whatever time the run happens.
+	-- The timetable opens on the current hour, and Up stops at the tabs rather
+	-- than wrapping, so this is deterministic whatever time the run happens.
 	function() for _ = 1, 40 do TimetableScene.inputHandler.upButtonDown() end end,
 	function() shoot("12-timetable-tabs-focused") end,
 	function() TimetableScene.inputHandler.rightButtonDown() end,
 	function() TimetableScene.inputHandler.downButtonDown() end,
 	function() shoot("13-timetable-other-day") end,
-	-- Back to the top, then down to the third row: 05, 06, 07 -- and 07:00
-	-- holds twelve departures, the widest row the real data ever produces.
+	-- Down to 07:00, the row with twelve departures.
 	function() for _ = 1, 40 do TimetableScene.inputHandler.upButtonDown() end end,
 	function()
 		TimetableScene.inputHandler.downButtonDown() -- tabs -> grid, row 1
@@ -279,8 +245,8 @@ local steps <const> = {
 	function() shoot("16-trip-scrolled") end,
 	function() TripScene.inputHandler.BButtonDown() end,
 	function() shoot("17-timetable-remembered") end,
-	-- Straight to the night route's timetable: its hours run 23, 24, 25 in
-	-- the data and must draw as 23, 00, 01, and its weekends are empty.
+	-- The night route: hours run 23, 24, 25 in the data and must draw as
+	-- 23, 00, 01.
 	function()
 		for _, r in ipairs(Store.data.routes) do
 			if r.route_short_name == "25N" then
@@ -289,11 +255,9 @@ local steps <const> = {
 			end
 		end
 	end,
-	-- It opens on today, which this route doesn't run: the grid is empty, so
-	-- focus must fall back to the tabs or the d-pad does nothing at all.
+	-- Opens on a day this route does not run, so the grid is empty.
 	function() shoot("18-timetable-no-service") end,
-	-- Proof it isn't a dead end, and the payoff: weekdays run past midnight,
-	-- listed as 24:xx and 25:xx and drawn as 00 and 01.
+	-- Weekdays run past midnight.
 	function() TimetableScene.inputHandler.rightButtonDown() end,
 	function() shoot("19-timetable-past-midnight") end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
@@ -316,7 +280,7 @@ local steps <const> = {
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function()
 		shootDetached("25-sync", SyncScene({}))
-		-- Stale snapshot, no favourites: the other half of the menu's states.
+		-- Stale snapshot: the menu's other state.
 		Store.data.synced_at = playdate.getSecondsSinceEpoch() - 3 * 24 * 60 * 60
 		shootDetached("26-mainmenu-stale", MainMenuScene({}))
 	end,
@@ -343,21 +307,19 @@ local nobleUpdate <const> = playdate.update
 local index = 1
 local frame = 0
 
--- Frames to wait after a step before running the next one. It has to outlast
--- a transition (0.25s, ~8 frames) on its own, because Noble.isTransitioning()
--- is still false in the gap between a step asking for a transition and the
--- engine starting it -- gate on that alone and steps fire mid-slide, or
--- before the very first frame has been painted at all.
+-- Has to outlast a transition (~8 frames) on its own: isTransitioning() is
+-- still false between a step asking for one and the engine starting it.
 local SETTLE <const> = 12
 local cooldown = SETTLE
 
 function playdate.update()
+	-- The Simulator console is not reachable from a script, so errors are
+	-- rendered into ERROR.png.
 	local ok, err = pcall(nobleUpdate)
 	if not ok then return bail("step " .. index .. " update", err) end
 
 	frame = frame + 1
-	-- Hard backstop: if a step never becomes runnable, dump the screen and
-	-- quit rather than hanging the build.
+	-- Backstop, so a stuck step cannot hang the build.
 	if frame > 1200 then
 		shoot("STALLED-at-step-" .. index)
 		return playdate.simulator.exit()
@@ -367,8 +329,7 @@ function playdate.update()
 		cooldown = cooldown - 1
 		return
 	end
-	-- Noble ignores anything asked of it mid-transition, and Nav refuses to
-	-- move then too. Waiting it out is what makes the walk frame-rate proof.
+	-- Noble ignores anything asked of it mid-transition, and so does Nav.
 	if Noble.isTransitioning() then return end
 
 	local step = steps[index]

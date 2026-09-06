@@ -1,8 +1,5 @@
--- The default system font has no glyphs for Romanian diacritics, so synced
--- route/stop names (real Romanian text) render as "?" placeholders. Strip
--- them to plain ASCII before any drawText* call. Covers both the standard
--- comma-below letters (ș/ț) and the cedilla variants (ş/ţ) some sources use
--- interchangeably.
+-- The fonts have no glyphs for Romanian diacritics, so names have to be
+-- stripped to ASCII before any drawText* call.
 
 Text = Text or {}
 
@@ -22,8 +19,7 @@ function Text.clean(s)
 	return s
 end
 
--- Manual length cap for text drawn with the unclipped drawText/drawTextAligned
--- (no bounding box to truncate against automatically).
+-- drawText/drawTextAligned do not clip, so callers cap length themselves.
 function Text.truncate(s, maxLen)
 	if s == nil then return "" end
 	if #s <= maxLen then return s end
@@ -35,10 +31,7 @@ local function widthOf(s, font)
 	return playdate.graphics.getTextSize(s)
 end
 
--- Same idea but measured in actual pixel width, for laying out labels next to
--- each other (list rows, stop names along the route line) where a character
--- count can't predict overlap. `font` is the font it will be drawn in --
--- measuring in one font and drawing in another is how labels end up colliding.
+-- `font` must be the font the text is drawn in, or labels collide.
 function Text.truncateToWidth(s, maxWidth, font)
 	if s == nil or s == "" then return "" end
 	if widthOf(s, font) <= maxWidth then return s end
@@ -57,15 +50,8 @@ function Text.truncateToWidth(s, maxWidth, font)
 	return s:sub(1, lo) .. "."
 end
 
--- Greedy word wrap into at most `maxLines` lines of at most `maxWidth`
--- pixels, so a two-word stop name can use two lines instead of being cut in
--- half. Anything that still doesn't fit (one very long word, or more lines
--- than allowed) is truncated by width, so the result is always inside the
--- box the caller asked for. Returns an array of lines.
---
--- Hand-rolled rather than using drawTextInRect: that call renders nothing at
--- all in this project (see AGENTS.md), and the caller needs the line count
--- up front to place the block anyway.
+-- Greedy wrap into at most `maxLines` lines, each truncated to `maxWidth`.
+-- Hand-rolled because drawTextInRect renders nothing here (see AGENTS.md).
 function Text.wrapToWidth(s, maxWidth, maxLines, font)
 	if s == nil or s == "" then return {} end
 
@@ -75,8 +61,7 @@ function Text.wrapToWidth(s, maxWidth, maxLines, font)
 		local candidate = current and (current .. " " .. word) or word
 		if current ~= nil and widthOf(candidate, font) > maxWidth then
 			if #lines + 1 >= maxLines then
-				-- No room for another line: cram the rest onto this one and
-				-- let truncation deal with it.
+				-- No room for another line; truncation below handles it.
 				current = candidate
 				break
 			end
@@ -94,16 +79,8 @@ function Text.wrapToWidth(s, maxWidth, maxLines, font)
 	return lines
 end
 
--- Sort key for natural (human) ordering: route "25N" belongs between "25" and
--- "26", not between "2" and "3", and plain string comparison gets that wrong
--- because it compares "1" against "0" of "100" character by character.
---
--- Zero-padding every run of digits to a fixed width turns the problem back
--- into a plain string compare: "25N" -> "000025n", "100" -> "000100",
--- "M11" -> "m000011". Digits sort before letters in ASCII, so numbered routes
--- come before the M-prefixed metropolitan ones, which is the order the paper
--- timetables use. Diacritics are stripped first so stop names sort the way
--- they're drawn.
+-- Natural sort: zero-pads digit runs so "25N" falls between "25" and "26"
+-- ("25N" -> "000025n"). Digits sort before letters, so "M11" comes last.
 function Text.sortKey(s)
 	if s == nil then return "" end
 	return (Text.clean(s):lower():gsub("%d+", function(digits)
@@ -111,9 +88,7 @@ function Text.sortKey(s)
 	end))
 end
 
--- CTP publishes a service day that runs past midnight the GTFS way: the
--- 01:05 night bus is listed as "25:05", so its departures keep sorting after
--- the 23:00 one instead of jumping to the top of the timetable. Sort on the
+-- Past-midnight departures are published GTFS-style as "25:05". Sort on the
 -- raw value, draw this.
 function Text.clockLabel(hhmm)
 	if hhmm == nil then return "" end
@@ -122,9 +97,7 @@ function Text.clockLabel(hhmm)
 	return string.format("%02d:%s", tonumber(hour) % 24, minute)
 end
 
--- How far off a departure is. "now" when it's pulling in, a countdown while
--- that's the useful framing, a clock time once it's far enough away to be an
--- appointment rather than a wait.
+-- "now" under a minute, a countdown under an hour, a clock time beyond that.
 function Text.whenLabel(secondsAway, absoluteSeconds)
 	if secondsAway < 60 then return "now" end
 	if secondsAway < 3600 then return (secondsAway // 60) .. "m" end

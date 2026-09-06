@@ -1,11 +1,5 @@
-# Regenerates the launcher art in source/launcher/ (card, icon, launch image).
-#
-# Same trick as tools/screenshots.ps1: builds a throwaway copy of source/ with
-# tools/launcher/main.lua as the entry point, runs it in the Simulator, and
-# lets it write the PNGs. Drawing them with the app's own graphics stack means
-# the art uses the real fonts and the real 1-bit rendering.
-#
-#   .\tools\launcher.ps1
+# Regenerates the launcher art in source/launcher/ (card, icon, launch image)
+# by running tools/launcher/main.lua in the Simulator on a copy of source/.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -24,7 +18,7 @@ New-Item -ItemType Directory -Path $build | Out-Null
 
 $src = Join-Path $build "source"
 Copy-Item (Join-Path $root "source") $src -Recurse
-# The generator must not find last run's art and bundle it into its own build.
+# The generator must not bundle last run's art into its own build.
 Remove-Item (Join-Path $src "launcher") -Recurse -Force -ErrorAction SilentlyContinue
 
 $generator = Get-Content (Join-Path $PSScriptRoot "launcher\main.lua") -Raw

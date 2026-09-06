@@ -418,8 +418,7 @@ function scene:drawBackground()
 end
 
 scene.inputHandler = {
-	-- Step toward the stop you're pointing at, which is the other way round
-	-- once the line is mirrored.
+	-- Step toward the stop
 	leftButtonDown = function() focusStop(focusIndex + (isFlipped() and 1 or -1)) end,
 	rightButtonDown = function() focusStop(focusIndex + (isFlipped() and -1 or 1)) end,
 	upButtonDown = function() toggleDirection() end,

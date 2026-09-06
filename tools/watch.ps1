@@ -1,6 +1,5 @@
-# Rebuilds ConexiuniCluj.pdx whenever a file under source/ changes.
-# pdc has no built-in watch mode. This is the missing piece: run this, then
-# in the Simulator press Ctrl-R after each rebuild to reload the game.
+# Rebuilds ConexiuniCluj.pdx whenever a file under source/ changes, since pdc
+# has no watch mode. Press Ctrl-R in the Simulator after each rebuild.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

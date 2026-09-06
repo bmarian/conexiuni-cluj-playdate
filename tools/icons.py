@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 """Rasterize the vendored pixelarticons SVGs into 1-bit PNGs for the .pdx.
 
-pixelarticons (tools/pixelarticons/, MIT) are drawn on a 24x24 pixel grid out
-of nothing but axis-aligned rectangles, so a scanline fill sampled at pixel
-centers reproduces them exactly -- no SVG renderer, no third-party module.
-That is the whole reason this pack was picked over a curve-based one like
-Lucide: on a 1-bit 400x240 screen a downscaled vector icon turns to mush,
-while these are already pixel art.
-
     python tools/icons.py
 
-writes source/images/icons/<name>-<size>.png (transparent background, black
-strokes) which pdc compiles to .pdi. Icons are loaded by source/lib/icons.lua.
+Writes source/images/icons/<name>-<size>.png, which pdc compiles to .pdi. The
+icons are axis-aligned rectangles on a 24x24 grid, so a scanline fill sampled
+at pixel centers reproduces them exactly, with no SVG renderer needed.
 """
 
 import re
@@ -23,19 +17,17 @@ ROOT = Path(__file__).resolve().parent.parent
 SVG_DIR = ROOT / "tools" / "pixelarticons"
 OUT_DIR = ROOT / "source" / "images" / "icons"
 
-# 24 is the pack's native grid. 12 is a half-scale point sample, which thins
-# the pack's 2px strokes to a clean 1px -- it holds up for outline shapes
-# (chevrons, clock, the alert square) but collapses the solid ones, so only
-# the icons that actually get used small are emitted at 12.
+# 24 is the pack's native grid. 12 is a half-scale point sample: it thins the
+# 2px strokes to 1px, which works for outlines but collapses solid shapes.
 ICONS = {
-    "bus": (24,),             # route detail buses, All routes
-    "map-pin": (24,),         # All stops, stop rows
-    "heart": (24, 12),      # favourites, matching the web app
-    "reload": (24,),          # sync
-    "clock": (24, 12),        # timetable, synced-ago banner
-    "square-alert": (24, 12), # empty states, stale sync warning
-    "calendar": (24,),        # timetable header
-    "chevron-left": (12,),    # d-pad hints, direction toggle
+    "bus": (24,),
+    "map-pin": (24,),
+    "heart": (24, 12),
+    "reload": (24,),
+    "clock": (24, 12),
+    "square-alert": (24, 12),
+    "calendar": (24,),
+    "chevron-left": (12,),
     "chevron-right": (12,),
     "chevron-up": (12,),
     "chevron-down": (12,),
@@ -47,9 +39,8 @@ TOKEN = re.compile(r"([MmLlHhVvZz])|(-?\d*\.?\d+)")
 def parse_path(d):
     """Return a list of closed subpaths (lists of (x, y) points).
 
-    Only the rectilinear subset pixelarticons uses is supported: M/L/H/V/Z in
-    both absolute and relative form. Anything else raises rather than silently
-    producing a wrong icon.
+    Only M/L/H/V/Z, absolute and relative, which is all pixelarticons uses.
+    Anything else raises rather than producing a wrong icon.
     """
     tokens = [(cmd, num) for cmd, num in TOKEN.findall(d)]
     subpaths, current = [], []
@@ -144,9 +135,8 @@ def rasterize(svg_text, size):
     for d in re.findall(r'\sd="([^"]+)"', svg_text):
         subpaths.extend(parse_path(d))
 
-    # One sample per output pixel, at its center. At the native 24 that is
-    # exact; at 12 it lands on every other source pixel, which is what turns
-    # a 2px stroke into a 1px one instead of a 2px smear.
+    # One sample per output pixel, at its center: exact at 24, every other
+    # source pixel at 12.
     pixels = []
     for row in range(size):
         for col in range(size):
@@ -157,10 +147,9 @@ def rasterize(svg_text, size):
 
 
 def write_png(path, pixels, size):
-    """Write RGBA: opaque black where inked, fully transparent elsewhere.
+    """Write RGBA: opaque black where inked, transparent elsewhere.
 
-    pdc turns the alpha channel into the image's mask, which is what lets an
-    icon sit on top of a filled row without punching a white box in it.
+    pdc turns the alpha channel into the image's mask.
     """
     raw = bytearray()
     for row in range(size):
