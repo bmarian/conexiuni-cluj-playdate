@@ -1,0 +1,350 @@
+-- Route Detail: a flat schematic line of stops with buses drawn where the
+-- schedule says they should be right now (elapsed time since a departure,
+-- against the hour's cumulative stop offsets -- never live vehicle data).
+--
+-- Three stops are on screen at a time, each owning a 132px slot and drawing
+-- its name horizontally inside 120px of it, wrapped over two lines. That is
+-- the whole trick: a label can never be wider than its slot, so labels can
+-- never collide, and there is room for a 14px bold face instead of the tiny
+-- rotated text this screen used to need to fit a dozen stops on at once.
+--
+-- Left/Right steps one stop along the line, the crank pans freely, Up/Down
+-- flips direction, A opens the timetable.
+--
+-- Scene properties: { route }.
+
+RouteScene = {}
+class("RouteScene").extends(NobleScene)
+local scene = RouteScene
+
+scene.backgroundColor = Graphics.kColorWhite
+
+-- Horizontal geometry. Three slots of SPACING very nearly fill the 400px
+-- screen. LABEL_W is 124 because "Memorandumului" -- the longest single word
+-- in the Cluj stop list -- measures 123px in FONT_BIG and looks silly
+-- truncated; that still leaves an 8px gutter between neighbouring names.
+local SPACING <const> = 132
+local FIRST_X <const> = 66
+local LABEL_W <const> = 124
+local VISIBLE_SLOTS <const> = 3
+
+-- Vertical bands inside the content area. Each one owns its rows outright so
+-- nothing can grow into its neighbour: chips, then the line (buses are drawn
+-- centered on it, 13px either side), then two 20px label lines, then the
+-- position readout and the scrollbar.
+local DIRECTION_CENTER_Y <const> = 43
+local DIRECTION_RULE_Y <const> = 57
+local CHIP_CENTER_Y <const> = 84
+local LINE_Y <const> = 114
+local LABEL_TOP <const> = 130
+local COUNTER_CENTER_Y <const> = 182
+local SCROLLBAR_Y <const> = 196
+
+local CRANK_PIXELS_PER_DEGREE <const> = 1.6
+local PAN_SMOOTHING <const> = 0.35
+
+local route, dirKey, stops
+local worldX, targetX, focusIndex
+local favoriteMenuItem = nil
+
+local function clamp(value, lo, hi)
+	if value < lo then return lo end
+	if value > hi then return hi end
+	return value
+end
+
+local function direction()
+	return dirKey ~= nil and route.directions[dirKey] or nil
+end
+
+local function maxWorld()
+	return math.max(0, (#stops - VISIBLE_SLOTS) * SPACING)
+end
+
+local function worldXCentering(index)
+	return clamp(FIRST_X + (index - 1) * SPACING - Theme.WIDTH // 2, 0, maxWorld())
+end
+
+local function setDirection(key)
+	dirKey = key
+	stops = route.directions[dirKey].stops or {}
+	focusIndex = 1
+	worldX = 0
+	targetX = 0
+end
+
+local function bothDirections()
+	return route.directions.out ~= nil and route.directions["in"] ~= nil
+end
+
+local function toggleDirection()
+	if bothDirections() then
+		setDirection(dirKey == "out" and "in" or "out")
+	end
+end
+
+local function focusStop(index)
+	if #stops == 0 then return end
+	focusIndex = clamp(index, 1, #stops)
+	targetX = worldXCentering(focusIndex)
+end
+
+-- Sunday=7, Saturday=6, Monday..Friday=1..5 (playdate.getTime() convention).
+local function scheduleKeyForToday()
+	local weekday = playdate.getTime().weekday
+	if weekday == 7 then return "sunday" end
+	if weekday == 6 then return "saturday" end
+	return "weekdays"
+end
+
+local function parseHHMM(s)
+	local hour, minute = s:match("(%d+):(%d+)")
+	if hour == nil then return nil end
+	return tonumber(hour) * 3600 + tonumber(minute) * 60
+end
+
+-- Fractional 1-based stop index (2.5 = halfway between stops 2 and 3) for a
+-- trip `elapsed` seconds into its run, from this hour's cumulative offsets.
+local function logicalIndexForElapsed(offsets, elapsed)
+	for i = 1, #stops - 1 do
+		local a, b = offsets[i], offsets[i + 1]
+		if a ~= nil and b ~= nil and elapsed >= a and elapsed <= b then
+			if b <= a then return i end
+			return i + (elapsed - a) / (b - a)
+		end
+	end
+	return nil
+end
+
+-- Every trip that should currently be somewhere on this line, as
+-- { logicalIndex, elapsed }. A frequent route has several at once; outside
+-- service hours there are none.
+local function activeTrips()
+	if #stops < 2 or route.timetable == nil then return {}, nil end
+
+	local day = route.timetable[scheduleKeyForToday()]
+	if day == nil then return {}, nil end
+
+	local now = playdate.getTime()
+	local offsets = Store.offsetsForHour(direction(), now.hour)
+	if offsets == nil then return {}, nil end
+
+	local totalDuration = offsets[#stops]
+	if totalDuration == nil or totalDuration <= 0 then return {}, offsets end
+
+	local field = (dirKey == "out") and "departure_out" or "departure_in"
+	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
+
+	local trips = {}
+	for _, entry in ipairs(day.entries or {}) do
+		local departure = entry[field]
+		if departure ~= nil and departure ~= "" then
+			local parsed = parseHHMM(departure)
+			if parsed ~= nil then
+				local elapsed = nowSeconds - parsed
+				if elapsed >= 0 and elapsed <= totalDuration then
+					local index = logicalIndexForElapsed(offsets, elapsed)
+					if index ~= nil then
+						table.insert(trips, { logicalIndex = index, elapsed = elapsed })
+					end
+				end
+			end
+		end
+	end
+	return trips, offsets
+end
+
+function scene:init(__sceneProperties)
+	scene.super.init(self)
+
+	route = __sceneProperties.route
+	favoriteMenuItem = nil
+
+	if route.directions.out ~= nil then
+		setDirection("out")
+	elseif route.directions["in"] ~= nil then
+		setDirection("in")
+	else
+		dirKey, stops, worldX, targetX, focusIndex = nil, {}, 0, 0, 1
+	end
+end
+
+function scene:start()
+	scene.super.start(self)
+	-- Favouriting has no spare button on this screen, and the system menu is
+	-- where the Playdate expects per-screen extras to live.
+	favoriteMenuItem = playdate.getSystemMenu():addMenuItem("favorite route", function()
+		Store.setFavoriteRoute(route.route_id)
+	end)
+end
+
+function scene:exit()
+	scene.super.exit(self)
+	if favoriteMenuItem ~= nil then
+		playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
+		favoriteMenuItem = nil
+	end
+end
+
+function scene:update()
+	scene.super.update(self)
+	-- Ease toward the snapped target so stepping between stops glides
+	-- instead of jumping; the crank writes worldX and targetX together, so
+	-- this is a no-op while cranking.
+	if math.abs(targetX - worldX) < 0.5 then
+		worldX = targetX
+	else
+		worldX = worldX + (targetX - worldX) * PAN_SMOOTHING
+	end
+end
+
+local function stopScreenX(index)
+	return FIRST_X + (index - 1) * SPACING - worldX
+end
+
+local function drawDirectionRow()
+	local centerY = DIRECTION_CENTER_Y
+	local available = Theme.WIDTH - 2 * Theme.MARGIN
+
+	if bothDirections() then
+		Icons.drawCentered("chevron-up", 12, Theme.WIDTH - Theme.MARGIN - 6, centerY - 7)
+		Icons.drawCentered("chevron-down", 12, Theme.WIDTH - Theme.MARGIN - 6, centerY + 7)
+		available = available - 24
+	end
+
+	local headsign = direction() ~= nil and Text.clean(direction().headsign or "") or ""
+	Theme.textCentered(
+		Text.truncateToWidth("to " .. headsign, available, Theme.FONT_TITLE),
+		Theme.MARGIN, centerY, kTextAlignment.left, Theme.FONT_TITLE
+	)
+
+	Graphics.setColor(Graphics.kColorBlack)
+	Graphics.setLineWidth(1)
+	Graphics.drawLine(0, DIRECTION_RULE_Y, Theme.WIDTH, DIRECTION_RULE_Y)
+end
+
+local function drawStop(index, stop, offsets, reference)
+	local x = stopScreenX(index)
+	-- A slot is drawn only when its whole label box is on screen, so nothing
+	-- is ever half-cut at the edges.
+	if x < -SPACING or x > Theme.WIDTH + SPACING then return end
+
+	-- Minutes of schedule distance from the reference trip.
+	if reference ~= nil and offsets ~= nil and offsets[index] ~= nil then
+		local label = math.floor(math.abs(offsets[index] - reference.elapsed) / 60 + 0.5) .. "m"
+		Theme.badge(x - Theme.badgeWidth(label, Theme.FONT_SMALL) // 2, CHIP_CENTER_Y, label, Theme.FONT_SMALL)
+	end
+
+	-- Node: terminus stops are solid, the focused one is ringed.
+	Graphics.setColor(Graphics.kColorWhite)
+	Graphics.fillCircleAtPoint(x, LINE_Y, 6)
+	Graphics.setColor(Graphics.kColorBlack)
+	if index == 1 or index == #stops then
+		Graphics.fillCircleAtPoint(x, LINE_Y, 5)
+	else
+		Graphics.setLineWidth(2)
+		Graphics.drawCircleAtPoint(x, LINE_Y, 5)
+	end
+	if index == focusIndex then
+		Graphics.setLineWidth(1)
+		Graphics.drawCircleAtPoint(x, LINE_Y, 9)
+	end
+
+	local lines = Text.wrapToWidth(Text.clean(stop.stop_name), LABEL_W, 2, Theme.FONT_BIG)
+	local lineHeight = Theme.FONT_BIG:getHeight()
+	for i, line in ipairs(lines) do
+		Noble.Text.draw(line, x, LABEL_TOP + (i - 1) * lineHeight, kTextAlignment.center, false, Theme.FONT_BIG)
+	end
+end
+
+local function drawBus(logicalIndex)
+	local x = stopScreenX(logicalIndex)
+	if x < -20 or x > Theme.WIDTH + 20 then return end
+
+	-- Punch a white hole in the line so the bus reads as sitting on it.
+	Graphics.setColor(Graphics.kColorWhite)
+	Graphics.fillRoundRect(x - 15, LINE_Y - 13, 30, 26, 5)
+	Graphics.setColor(Graphics.kColorBlack)
+	Graphics.setLineWidth(1)
+	Graphics.drawRoundRect(x - 15, LINE_Y - 13, 30, 26, 5)
+	Icons.drawCentered("bus", 24, x, LINE_Y)
+end
+
+local function drawRouteLine()
+	local trips, offsets = activeTrips()
+	-- The "Nm" chips are measured against one reference trip: with several
+	-- buses running there is no single right answer, and the first active
+	-- trip is the simplest choice.
+	local reference = trips[1]
+
+	Graphics.setColor(Graphics.kColorBlack)
+	Graphics.setLineWidth(2)
+	Graphics.drawLine(0, LINE_Y, Theme.WIDTH, LINE_Y)
+	Graphics.setLineWidth(1)
+
+	for index, stop in ipairs(stops) do
+		drawStop(index, stop, offsets, reference)
+	end
+
+	for _, trip in ipairs(trips) do
+		drawBus(trip.logicalIndex)
+	end
+
+	if #trips == 0 then
+		Theme.textCentered("no buses running right now", Theme.WIDTH // 2, CHIP_CENTER_Y,
+			kTextAlignment.center, Theme.FONT_SMALL)
+	end
+
+	Theme.textCentered(
+		"stop " .. focusIndex .. " of " .. #stops,
+		Theme.WIDTH // 2, COUNTER_CENTER_Y, kTextAlignment.center, Theme.FONT_SMALL
+	)
+	Theme.scrollbarH(
+		Theme.MARGIN, SCROLLBAR_Y, Theme.WIDTH - 2 * Theme.MARGIN,
+		focusIndex - 1, VISIBLE_SLOTS, #stops
+	)
+end
+
+function scene:drawBackground()
+	scene.super.drawBackground(self)
+
+	Theme.header({
+		title = route.route_long_name,
+		badge = Text.clean(route.route_short_name),
+		icon = Store.favorites.route_id == route.route_id and "star" or nil,
+	})
+
+	if #stops == 0 then
+		Theme.emptyState("square-alert", "No stops for this direction")
+	else
+		drawDirectionRow()
+		drawRouteLine()
+	end
+
+	local hints = { { pad = "leftRight", label = "stops" } }
+	if bothDirections() then table.insert(hints, { pad = "upDown", label = "direction" }) end
+	table.insert(hints, { button = "A", label = "timetable" })
+	table.insert(hints, { button = "B", label = "back" })
+	Theme.footer(hints)
+end
+
+scene.inputHandler = {
+	leftButtonDown = function() focusStop(focusIndex - 1) end,
+	rightButtonDown = function() focusStop(focusIndex + 1) end,
+	upButtonDown = function() toggleDirection() end,
+	downButtonDown = function() toggleDirection() end,
+	AButtonDown = function()
+		if dirKey ~= nil then
+			Nav.push(TimetableScene, { route = route, dirKey = dirKey })
+		end
+	end,
+	BButtonDown = function() Nav.pop() end,
+	cranked = function(change)
+		if #stops == 0 then return end
+		worldX = clamp(worldX + change * CRANK_PIXELS_PER_DEGREE, 0, maxWorld())
+		targetX = worldX
+		-- Keep the focus (and the scrollbar) on whichever stop is nearest
+		-- the middle of the screen while free-panning.
+		focusIndex = clamp(math.floor((worldX + Theme.WIDTH // 2 - FIRST_X) / SPACING + 1.5), 1, #stops)
+	end,
+}
