@@ -30,7 +30,7 @@ OUT_DIR = ROOT / "source" / "images" / "icons"
 ICONS = {
     "bus": (24,),             # route detail buses, All routes
     "map-pin": (24,),         # All stops, stop rows
-    "star": (24,),            # favorites
+    "heart": (24, 12),      # favourites, matching the web app
     "reload": (24,),          # sync
     "clock": (24, 12),        # timetable, synced-ago banner
     "square-alert": (24, 12), # empty states, stale sync warning

@@ -146,14 +146,21 @@ local function drawChip(x, centerY, letter)
 	Graphics.setImageDrawMode(Graphics.kDrawModeCopy)
 end
 
--- A hint's leading glyph is either an A/B chip or a pair of d-pad chevrons.
+-- A hint's leading glyph is either an A/B chip or one or two d-pad chevrons.
+-- Single chevrons are for when the two directions do different things --
+-- Right favourites, Left removes -- rather than being two ends of one axis.
 local HINT_GLYPHS <const> = {
 	leftRight = { "chevron-left", "chevron-right" },
 	upDown = { "chevron-up", "chevron-down" },
+	left = { "chevron-left" },
+	right = { "chevron-right" },
+	up = { "chevron-up" },
+	down = { "chevron-down" },
 }
 
 local function hintGlyphWidth(hint)
-	if HINT_GLYPHS[hint.pad] ~= nil then return 24 end
+	local glyphs = HINT_GLYPHS[hint.pad]
+	if glyphs ~= nil then return #glyphs * 12 end
 	return CHIP
 end
 
@@ -181,8 +188,9 @@ function Theme.footer(hints)
 	for _, hint in ipairs(hints) do
 		local glyphs = HINT_GLYPHS[hint.pad]
 		if glyphs ~= nil then
-			Icons.drawCentered(glyphs[1], 12, x + 6, centerY)
-			Icons.drawCentered(glyphs[2], 12, x + 18, centerY)
+			for i, glyph in ipairs(glyphs) do
+				Icons.drawCentered(glyph, 12, x + 6 + (i - 1) * 12, centerY)
+			end
 		else
 			drawChip(x, centerY, hint.button)
 		end
@@ -205,7 +213,11 @@ end
 --- for rows that carry several values (the next few departures at a stop).
 --- The first is boxed, because it's the one that matters.
 ---
---- opts: { icon, badge, label, accessory, accessories, font, accessoryFont, width }
+--- `markIcon` is a 12px mark at the right edge -- a favourite heart on a
+--- list row -- placed outside the label so rows stay aligned whether or not
+--- they carry one.
+---
+--- opts: { icon, badge, label, accessory, accessories, markIcon, font, accessoryFont, width }
 function Theme.row(y, height, selected, opts)
 	local centerY = y + height // 2
 	local font = opts.font or Theme.FONT_BODY
@@ -231,6 +243,11 @@ function Theme.row(y, height, selected, opts)
 	-- Everything on the right is placed from the right edge inward; whatever
 	-- is left over is the label's, and it gets truncated to exactly that.
 	local labelRight = width - Theme.MARGIN
+
+	if opts.markIcon ~= nil then
+		Icons.drawCentered(opts.markIcon, 12, labelRight - 6, centerY)
+		labelRight = labelRight - 12 - Theme.MARGIN
+	end
 
 	if opts.accessory ~= nil then
 		local accessoryFont = opts.accessoryFont or Theme.FONT_SMALL

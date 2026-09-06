@@ -211,7 +211,8 @@ Text rendering notes:
   hundred routes.
 
 Controls: A drills in, B goes back one screen, the crank scrolls (lists) or
-free-pans (the route line). On the route line left/right steps one stop and
+free-pans (the route line). In the browse lists Right/Left add and remove a
+favorite. On the route line left/right steps one stop and
 up/down flips direction — the line is horizontal, so left/right moving along
 it is the only mapping that reads right. Menu button stays reserved for the
 system menu, which is where "favorite route"/"favorite stop" live: the four
@@ -241,9 +242,11 @@ built accordingly:
 - A is a drill-in to that route **in the direction shown** (`RouteScene`
   takes an optional `dirKey`).
 
-The scan is done in `scene:init` rather than kept as a permanent stop→routes
-index: all 107 routes × 2 directions for the busiest stop measured **2 ms**
-in the Simulator, and the snapshot is already the big thing in memory.
+The scan (`Store.departuresAtStop`, shared with the Main Menu) is done on
+demand rather than kept as a permanent stop→routes index: all 107 routes × 2
+directions for the busiest stop measured **2 ms** in the Simulator, and the
+snapshot is already the big thing in memory. Both screens rebuild once a
+minute so a countdown stays honest and a departure that has gone drops off.
 
 ### Times past midnight
 
@@ -287,16 +290,44 @@ All data below comes from local storage after sync — see New Endpoint.
 | Scene | Shows |
 |---|---|
 | `SyncScene` | the only screen that touches the network; status, error, A to retry |
-| `MainMenuScene` | `synced_at` banner (warns if >24h old); favorite route/stop rows, showing the favorite's name once set; All Routes / All Stops with counts |
-| `ListScene` | both lists — routes (number badge + long name), stops (pin + name); remembers its selected row across a drill-down |
+| `MainMenuScene` | `synced_at` banner (warns if >24h old); Favorite routes / Favorite stops / All routes / All stops, each with a count |
+| `ListScene` | all four lists — All routes, All stops, and the two favorites screens; Right/Left add and remove favorites; remembers its selected row per list across a drill-down |
 | `RouteScene` | three-stop window of the line, schedule-approximated buses, direction toggle, position readout |
 | `TimetableScene` | day tabs + hour-grouped grid; **every departure is individually selectable**, and A on one opens `TripScene` |
 | `TripScene` | one departure, stop by stop: what time "the 13:37" reaches every stop on the way |
 | `StopScene` | departure board: which bus leaves from here next, soonest first |
 
-Favorites are on-device only (`playdate.datastore`, a separate small file
-from the synced snapshot) — a route/stop ID plus enough to render the Main
-Menu shortcut without touching the full dataset.
+### Favorites
+
+On-device only, in their own small `playdate.datastore` file, separate from
+the snapshot so they survive a failed or skipped sync.
+
+- **Stored as arrays of ids, never as a set keyed by id.** `json.encode`
+  turns numeric table keys into strings, so a set comes back from disk with
+  string keys and every lookup silently fails. Verified on device-shaped
+  data: after a write/read round trip the ids are still `number`s. There are
+  never enough favourites for the linear scan in `indexOf` to matter.
+- The old single-favourite file (`{route_id, stop_id}`) is migrated on load
+  by `Store.loadFavorites`.
+- Managed from the **browse lists**, where you are already looking at
+  everything: **Right favourites the selected row, Left removes it**. Not a
+  single toggle — from a list you are often adding several in a row, and a
+  toggle means watching the heart to know which way each press went. This
+  way Right always means the same thing. Rows read `Store` on every draw, so
+  the heart mark answers immediately.
+- Also toggled from the **system menu** on Route Detail and Stop Detail,
+  where all four buttons are spoken for. That label says what pressing it
+  will do ("favorite route" / "unfavorite route"), and the header's heart is
+  the live indicator.
+- The Main Menu carries **counts only**, with "Favorite routes" and
+  "Favorite stops" opening their own `ListScene` screens. A version that
+  listed favourites inline with their next departures was tried and pulled:
+  on a 400x240 screen it read as a wall of numbers. The counts belong on the
+  menu and the detail belongs one press away.
+- Those favourite screens pass `refresh` to `ListScene`, so removing the row
+  you are standing on empties the list there and then rather than on the
+  next visit. They watch `Store.favoritesRevision`, as does the menu's count
+  row — **bump that counter from anything that changes favourites.**
 
 ## Endpoint: `GET /api/playdate/export`
 
@@ -485,8 +516,8 @@ LuaCATS stubs; `.luarc.json` points `workspace.library` at it and sets
   Romanian names — verified from actual renders via `tools/screenshots.ps1`,
   not by eye over the code.
 - All six screens are built, Stop Detail included.
-- Favorites can be set from the system menu on Route/Stop Detail, and the
-  Main Menu shows the favorite's name once one is set.
+- Favorites: many of each, toggleable, listed on the Main Menu with live
+  departures for favorited stops.
 
 The sync path has been run end to end against the live endpoint through the
 Simulator: 991 KB downloaded, decoded, sorted and browsed, with the route

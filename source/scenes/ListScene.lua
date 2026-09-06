@@ -1,11 +1,18 @@
--- The scrollable list behind both "All routes" and "All stops". One scene,
--- two configurations, so the two lists can't drift apart visually.
+-- The scrollable list behind "All routes", "All stops" and the two
+-- favourites screens. One scene, four configurations, so they can't drift
+-- apart visually.
 --
 -- Built on playdate.ui.gridview rather than Noble.Menu: Noble.Menu draws
 -- every item at once, which is fine for a four-item menu and wrong for a
 -- hundred routes. gridview windows and clips for us.
 --
--- Scene properties: { key, title, items }.
+-- This is also where favourites are managed: Right favourites the selected
+-- row, Left removes it.
+--
+-- Scene properties: { key, title, items, icon, emptyTitle, emptyDetail,
+-- refresh }. `refresh` is for lists whose contents can change while you're
+-- looking at them -- the favourites screens, where Left removes the row you
+-- are standing on.
 
 ListScene = {}
 class("ListScene").extends(NobleScene)
@@ -20,9 +27,10 @@ local CRANK_DEGREES_PER_ROW <const> = 12
 -- lib/nav.lua), so the selected row is remembered per list here.
 local selectedRows = {}
 
-local key, title, items
+local key, title, items, options
 local grid = nil
 local crankAccumulator = 0
+local builtAtRevision = nil
 
 local function isRoute(item)
 	return item.route_short_name ~= nil
@@ -36,12 +44,30 @@ local function open(item)
 	end
 end
 
+-- Right favourites, Left removes. Deliberately not a single toggle: from a
+-- list you're often adding several in a row, and a toggle means watching the
+-- heart to know which way each press went. This way Right always means the
+-- same thing. The row's heart mark answers immediately, because rows read
+-- Store on every draw.
+local function setFavorite(item, favorite)
+	if item == nil then return end
+	if isRoute(item) then
+		if Store.isFavoriteRoute(item.route_id) ~= favorite then
+			Store.toggleFavoriteRoute(item.route_id)
+		end
+	elseif Store.isFavoriteStop(item.stop_id) ~= favorite then
+		Store.toggleFavoriteStop(item.stop_id)
+	end
+end
+
 function scene:init(__sceneProperties)
 	scene.super.init(self)
 
+	options = __sceneProperties
 	key = __sceneProperties.key
 	title = __sceneProperties.title
 	items = __sceneProperties.items or {}
+	builtAtRevision = Store.favoritesRevision
 	crankAccumulator = 0
 
 	grid = UI.gridview.new(0, ROW_H) -- cell width 0 = full width
@@ -60,15 +86,32 @@ function scene:init(__sceneProperties)
 			Theme.row(y, height, selected, {
 				badge = Text.clean(item.route_short_name),
 				label = item.route_long_name,
+				markIcon = Store.isFavoriteRoute(item.route_id) and "heart" or nil,
 				width = width,
 			})
 		else
 			Theme.row(y, height, selected, {
 				icon = "map-pin",
 				label = item.stop_name,
+				markIcon = Store.isFavoriteStop(item.stop_id) and "heart" or nil,
 				width = width,
 			})
 		end
+	end
+end
+
+-- A favourites list has to drop a row the moment it stops being a favourite,
+-- or Left appears to do nothing.
+function scene:update()
+	scene.super.update(self)
+	if options.refresh == nil or Store.favoritesRevision == builtAtRevision then return end
+
+	builtAtRevision = Store.favoritesRevision
+	items = options.refresh() or {}
+	grid:setNumberOfRows(math.max(1, #items))
+	if #items > 0 then
+		grid:setSelectedRow(math.min(grid:getSelectedRow(), #items))
+		selectedRows[key] = grid:getSelectedRow()
 	end
 end
 
@@ -87,11 +130,15 @@ function scene:drawBackground()
 
 	Theme.header({
 		title = title,
-		icon = key == "routes" and "bus" or "map-pin",
+		icon = options.icon or (key == "routes" and "bus" or "map-pin"),
 	})
 
 	if #items == 0 then
-		Theme.emptyState("square-alert", "Nothing synced yet", "sync from the main menu")
+		Theme.emptyState(
+			options.emptyIcon or "square-alert",
+			options.emptyTitle or "Nothing synced yet",
+			options.emptyDetail or "sync from the main menu"
+		)
 	else
 		local height = Theme.contentHeight()
 		grid:drawInRect(0, Theme.CONTENT_TOP, Theme.WIDTH - 10, height)
@@ -103,12 +150,21 @@ function scene:drawBackground()
 		)
 	end
 
-	Theme.footer({ { button = "A", label = "open" }, { button = "B", label = "back" } })
+	local hints = {}
+	if #items > 0 then
+		table.insert(hints, { button = "A", label = "open" })
+		table.insert(hints, { pad = "right", label = "favorite" })
+		table.insert(hints, { pad = "left", label = "remove" })
+	end
+	table.insert(hints, { button = "B", label = "back" })
+	Theme.footer(hints)
 end
 
 scene.inputHandler = {
 	upButtonDown = function() moveSelection(-1) end,
 	downButtonDown = function() moveSelection(1) end,
+	rightButtonDown = function() setFavorite(items[grid:getSelectedRow()], true) end,
+	leftButtonDown = function() setFavorite(items[grid:getSelectedRow()], false) end,
 	AButtonDown = function()
 		local item = items[grid:getSelectedRow()]
 		if item ~= nil then open(item) end

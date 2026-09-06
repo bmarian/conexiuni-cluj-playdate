@@ -213,13 +213,25 @@ function scene:init(__sceneProperties)
 	end
 end
 
+local function favoriteLabel()
+	return Store.isFavoriteRoute(route.route_id) and "unfavorite route" or "favorite route"
+end
+
 function scene:start()
 	scene.super.start(self)
 	-- Favouriting has no spare button on this screen, and the system menu is
-	-- where the Playdate expects per-screen extras to live.
-	favoriteMenuItem = playdate.getSystemMenu():addMenuItem("favorite route", function()
-		Store.setFavoriteRoute(route.route_id)
-	end)
+	-- where the Playdate expects per-screen extras to live. The label has to
+	-- say what pressing it will do, so it is rebuilt when the state changes.
+	local function install()
+		if favoriteMenuItem ~= nil then
+			playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
+		end
+		favoriteMenuItem = playdate.getSystemMenu():addMenuItem(favoriteLabel(), function()
+			Store.toggleFavoriteRoute(route.route_id)
+			install()
+		end)
+	end
+	install()
 end
 
 function scene:exit()
@@ -372,7 +384,7 @@ function scene:drawBackground()
 	Theme.header({
 		title = route.route_long_name,
 		badge = Text.clean(route.route_short_name),
-		icon = Store.favorites.route_id == route.route_id and "star" or nil,
+		icon = Store.isFavoriteRoute(route.route_id) and "heart" or nil,
 	})
 
 	if #stops == 0 then

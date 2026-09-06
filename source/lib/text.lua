@@ -121,3 +121,13 @@ function Text.clockLabel(hhmm)
 	if hour == nil then return hhmm end
 	return string.format("%02d:%s", tonumber(hour) % 24, minute)
 end
+
+-- How far off a departure is. "now" when it's pulling in, a countdown while
+-- that's the useful framing, a clock time once it's far enough away to be an
+-- appointment rather than a wait.
+function Text.whenLabel(secondsAway, absoluteSeconds)
+	if secondsAway < 60 then return "now" end
+	if secondsAway < 3600 then return (secondsAway // 60) .. "m" end
+	local wrapped = absoluteSeconds % (24 * 3600)
+	return string.format("%02d:%02d", wrapped // 3600, (wrapped % 3600) // 60)
+end
