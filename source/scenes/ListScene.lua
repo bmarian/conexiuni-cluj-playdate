@@ -60,11 +60,13 @@ function scene:init(__sceneProperties)
 			Theme.row(y, height, selected, {
 				badge = Text.clean(item.route_short_name),
 				label = item.route_long_name,
+				width = width,
 			})
 		else
 			Theme.row(y, height, selected, {
 				icon = "map-pin",
 				label = item.stop_name,
+				width = width,
 			})
 		end
 	end

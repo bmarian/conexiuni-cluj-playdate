@@ -1,9 +1,13 @@
 -- The CTP timetable for one route in one direction: three day tabs and an
 -- hour-grouped grid, the same shape the web app's RouteView uses.
 --
--- It used to be an overlay drawn on top of Route Detail, which is why the two
--- screens had different headers and different footers. It's a scene now, so
--- it gets the same chrome as everything else and B just goes back.
+-- Every departure is individually selectable, because picking one is the
+-- point: A opens TripScene, which turns "the 13:37" into a time for each
+-- stop along the way. That is the feature this screen exists to reach.
+--
+-- Focus moves between the day tabs and the grid, so the d-pad covers both
+-- without a modifier: Left/Right switches day on the tabs and steps between
+-- departures in the grid, Up from the top row goes back to the tabs.
 --
 -- Scene properties: { route, dirKey }.
 
@@ -13,20 +17,34 @@ local scene = TimetableScene
 
 scene.backgroundColor = Graphics.kColorWhite
 
-local TABS_TOP <const> = 32
+local TABS_TOP <const> = 36
 local TABS_H <const> = 24
-local TABS_RULE_Y <const> = 59
-local GRID_TOP <const> = 61
+local TABS_RULE_Y <const> = 63
+local GRID_TOP <const> = 65
 local ROW_H <const> = 21
-local HOUR_COLUMN <const> = 52
-local CRANK_DEGREES_PER_ROW <const> = 15
+-- The hour needs a clear gutter before the minutes start, or the row reads as
+-- one run-on number.
+local HOUR_COLUMN <const> = 54
+-- Route 25 puts 12 departures into the 07:00 hour on a weekday, which is the
+-- widest row in the whole dataset; the column pitch is sized so that fits.
+-- 12 columns from HOUR_COLUMN at this pitch end at x=380, inside GRID_RIGHT.
+local COLUMN_W <const> = 27
+-- The selected-departure chip, a touch narrower than the pitch so two
+-- neighbours never touch.
+local CHIP_W <const> = 26
+local GRID_RIGHT <const> = 386
+
+local FOCUS_TABS <const> = "tabs"
+local FOCUS_GRID <const> = "grid"
 
 local DAY_ORDER <const> = { "weekdays", "saturday", "sunday" }
 local DAY_LABELS <const> = { weekdays = "Mon-Fri", saturday = "Saturday", sunday = "Sunday" }
 
 local route, dirKey
-local dayKey, scrollTop, crankAccumulator
+local dayKey, focus
 local rows = {}
+local selectedRow, selectedColumn = 1, 1
+local scrollTop, crankAccumulator = 0, 0
 
 local function visibleRows()
 	return (Theme.CONTENT_BOTTOM - GRID_TOP) // ROW_H
@@ -53,7 +71,8 @@ local function departureField()
 	return (dirKey == "out") and "departure_out" or "departure_in"
 end
 
--- Departures grouped into one row per hour: { hour = "07", minutes = "15 35 55" }.
+-- Departures grouped into one row per hour, each keeping the full "HH:MM"
+-- so a selected one can be handed straight to TripScene.
 local function buildRows()
 	rows = {}
 	local today = day()
@@ -66,7 +85,7 @@ local function buildRows()
 			local hour, minute = time:match("(%d+):(%d+)")
 			if hour ~= nil then
 				byHour[hour] = byHour[hour] or {}
-				table.insert(byHour[hour], minute)
+				table.insert(byHour[hour], { minute = minute, time = time })
 			end
 		end
 	end
@@ -75,9 +94,37 @@ local function buildRows()
 	for hour in pairs(byHour) do table.insert(hours, hour) end
 	table.sort(hours)
 	for _, hour in ipairs(hours) do
-		table.sort(byHour[hour])
-		table.insert(rows, { hour = hour, minutes = table.concat(byHour[hour], "  ") })
+		local departures = byHour[hour]
+		table.sort(departures, function(a, b) return a.minute < b.minute end)
+		table.insert(rows, { hour = hour, departures = departures })
 	end
+end
+
+--- Puts the selection on the next departure at or after right now, so the
+--- screen opens on the part of the day you're actually in.
+local function selectNextDeparture()
+	selectedRow, selectedColumn = 1, 1
+	if #rows == 0 then return end
+
+	local now = playdate.getTime()
+	local nowMinutes = now.hour * 60 + now.minute
+	for rowIndex, row in ipairs(rows) do
+		for columnIndex, departure in ipairs(row.departures) do
+			if tonumber(row.hour) * 60 + tonumber(departure.minute) >= nowMinutes then
+				selectedRow, selectedColumn = rowIndex, columnIndex
+				return
+			end
+		end
+	end
+	-- Everything today has already gone; sit on the last one.
+	selectedRow = #rows
+	selectedColumn = #rows[selectedRow].departures
+end
+
+local function scrollToSelection()
+	local visible = visibleRows()
+	scrollTop = clamp(scrollTop, math.max(0, selectedRow - visible), selectedRow - 1)
+	scrollTop = clamp(scrollTop, 0, math.max(0, #rows - visible))
 end
 
 local function setDay(key)
@@ -85,6 +132,8 @@ local function setDay(key)
 	scrollTop = 0
 	crankAccumulator = 0
 	buildRows()
+	selectNextDeparture()
+	scrollToSelection()
 end
 
 local function stepDay(delta)
@@ -96,14 +145,48 @@ local function stepDay(delta)
 	end
 end
 
-local function scroll(delta)
-	scrollTop = clamp(scrollTop + delta, 0, math.max(0, #rows - visibleRows()))
+--- Steps one departure forward or back, rolling over into the next or
+--- previous hour, so the grid reads as one ordered day rather than rows.
+local function stepDeparture(delta)
+	if #rows == 0 then return end
+	local column = selectedColumn + delta
+
+	if column < 1 then
+		if selectedRow == 1 then return end
+		selectedRow = selectedRow - 1
+		selectedColumn = #rows[selectedRow].departures
+	elseif column > #rows[selectedRow].departures then
+		if selectedRow == #rows then return end
+		selectedRow = selectedRow + 1
+		selectedColumn = 1
+	else
+		selectedColumn = column
+	end
+	scrollToSelection()
+end
+
+local function stepHour(delta)
+	if #rows == 0 then return end
+	if delta < 0 and selectedRow == 1 then
+		focus = FOCUS_TABS
+		return
+	end
+	selectedRow = clamp(selectedRow + delta, 1, #rows)
+	selectedColumn = clamp(selectedColumn, 1, #rows[selectedRow].departures)
+	scrollToSelection()
+end
+
+local function selectedDeparture()
+	local row = rows[selectedRow]
+	if row == nil then return nil end
+	return row.departures[selectedColumn]
 end
 
 function scene:init(__sceneProperties)
-	scene.super.init(self)
 	route = __sceneProperties.route
 	dirKey = __sceneProperties.dirKey
+	scene.super.init(self)
+	focus = FOCUS_GRID
 	setDay(scheduleKeyForToday())
 end
 
@@ -121,10 +204,17 @@ local function drawTabs()
 		end
 		Theme.textCentered(DAY_LABELS[key], x + width // 2, centerY, kTextAlignment.center, Theme.FONT_TITLE)
 		Graphics.setImageDrawMode(Graphics.kDrawModeCopy)
+		-- A ring around the active tab shows the d-pad is on the tab strip
+		-- rather than down in the grid.
+		if selected and focus == FOCUS_TABS then
+			Graphics.setColor(Graphics.kColorBlack)
+			Graphics.setLineWidth(2)
+			Graphics.drawRoundRect(x - 3, TABS_TOP - 3, width + 6, TABS_H + 6, 7)
+			Graphics.setLineWidth(1)
+		end
 	end
 
 	Graphics.setColor(Graphics.kColorBlack)
-	Graphics.setLineWidth(1)
 	Graphics.drawLine(0, TABS_RULE_Y, Theme.WIDTH, TABS_RULE_Y)
 end
 
@@ -135,8 +225,6 @@ local function drawGrid()
 		return
 	end
 
-	-- Some routes are published as a headway window rather than a departure
-	-- list; that's one line, not a grid.
 	local frequency = today[(dirKey == "out") and "out_frequency" or "in_frequency"]
 	if frequency ~= nil then
 		Theme.emptyState("clock",
@@ -150,7 +238,6 @@ local function drawGrid()
 		return
 	end
 
-	scrollTop = clamp(scrollTop, 0, math.max(0, #rows - visibleRows()))
 	local todaysHour = (dayKey == scheduleKeyForToday())
 		and string.format("%02d", playdate.getTime().hour) or nil
 
@@ -161,21 +248,33 @@ local function drawGrid()
 
 		local y = GRID_TOP + offset * ROW_H
 		local centerY = y + ROW_H // 2
-		local isNow = row.hour == todaysHour
-		if isNow then
+
+		-- The current hour is marked with a caret in the margin, not a badge
+		-- or a filled row: a badge is taller than a 21px row and a fill would
+		-- compete with the selected departure, which owns the black on this
+		-- screen. A 7px arrow costs no vertical room at all.
+		if row.hour == todaysHour then
 			Graphics.setColor(Graphics.kColorBlack)
-			Graphics.fillRect(0, y, Theme.WIDTH - 10, ROW_H)
-			Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite)
+			Graphics.fillTriangle(4, centerY - 5, 4, centerY + 5, 11, centerY)
 		end
-
 		Theme.textCentered(row.hour, Theme.MARGIN + 8, centerY, kTextAlignment.left, Theme.FONT_TITLE)
-		local available = Theme.WIDTH - HOUR_COLUMN - 20
-		Theme.textCentered(
-			Text.truncateToWidth(row.minutes, available, Theme.FONT_BODY),
-			HOUR_COLUMN, centerY, kTextAlignment.left, Theme.FONT_BODY
-		)
 
-		Graphics.setImageDrawMode(Graphics.kDrawModeCopy)
+		for columnIndex, departure in ipairs(row.departures) do
+			-- Everything in the cell is placed from its center, so the chip
+			-- and the two digits inside it can't drift apart.
+			local center = HOUR_COLUMN + (columnIndex - 1) * COLUMN_W + COLUMN_W // 2
+			if center + CHIP_W // 2 > GRID_RIGHT then break end
+
+			local isSelected = focus == FOCUS_GRID
+				and index == selectedRow and columnIndex == selectedColumn
+			if isSelected then
+				Graphics.setColor(Graphics.kColorBlack)
+				Graphics.fillRoundRect(center - CHIP_W // 2, y + 1, CHIP_W, ROW_H - 2, 4)
+				Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite)
+			end
+			Theme.textCentered(departure.minute, center, centerY, kTextAlignment.center, Theme.FONT_BODY)
+			Graphics.setImageDrawMode(Graphics.kDrawModeCopy)
+		end
 	end
 
 	Theme.scrollbarV(
@@ -197,24 +296,60 @@ function scene:drawBackground()
 	drawTabs()
 	drawGrid()
 
-	Theme.footer({ { pad = "leftRight", label = "day" }, { button = "B", label = "back" } })
+	if focus == FOCUS_TABS then
+		Theme.footer({
+			{ pad = "leftRight", label = "day" },
+			{ pad = "upDown", label = "times" },
+			{ button = "B", label = "back" },
+		})
+	else
+		Theme.footer({
+			{ pad = "leftRight", label = "departure" },
+			{ pad = "upDown", label = "hour" },
+			{ button = "A", label = "stop times" },
+			{ button = "B", label = "back" },
+		})
+	end
 end
 
 scene.inputHandler = {
-	leftButtonDown = function() stepDay(-1) end,
-	rightButtonDown = function() stepDay(1) end,
-	upButtonDown = function() scroll(-1) end,
-	downButtonDown = function() scroll(1) end,
+	leftButtonDown = function()
+		if focus == FOCUS_TABS then stepDay(-1) else stepDeparture(-1) end
+	end,
+	rightButtonDown = function()
+		if focus == FOCUS_TABS then stepDay(1) else stepDeparture(1) end
+	end,
+	upButtonDown = function()
+		if focus == FOCUS_GRID then stepHour(-1) end
+	end,
+	downButtonDown = function()
+		if focus == FOCUS_TABS then
+			focus = FOCUS_GRID
+		else
+			stepHour(1)
+		end
+	end,
+	AButtonDown = function()
+		if focus == FOCUS_TABS then
+			focus = FOCUS_GRID
+			return
+		end
+		local departure = selectedDeparture()
+		if departure ~= nil then
+			Nav.push(TripScene, { route = route, dirKey = dirKey, departure = departure.time })
+		end
+	end,
 	BButtonDown = function() Nav.pop() end,
 	cranked = function(change)
+		if focus ~= FOCUS_GRID then return end
 		crankAccumulator = crankAccumulator + change
-		while crankAccumulator >= CRANK_DEGREES_PER_ROW do
-			scroll(1)
-			crankAccumulator = crankAccumulator - CRANK_DEGREES_PER_ROW
+		while crankAccumulator >= 15 do
+			stepDeparture(1)
+			crankAccumulator = crankAccumulator - 15
 		end
-		while crankAccumulator <= -CRANK_DEGREES_PER_ROW do
-			scroll(-1)
-			crankAccumulator = crankAccumulator + CRANK_DEGREES_PER_ROW
+		while crankAccumulator <= -15 do
+			stepDeparture(-1)
+			crankAccumulator = crankAccumulator + 15
 		end
 	end,
 }

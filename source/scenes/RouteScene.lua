@@ -32,13 +32,13 @@ local VISIBLE_SLOTS <const> = 3
 -- nothing can grow into its neighbour: chips, then the line (buses are drawn
 -- centered on it, 13px either side), then two 20px label lines, then the
 -- position readout and the scrollbar.
-local DIRECTION_CENTER_Y <const> = 43
-local DIRECTION_RULE_Y <const> = 57
-local CHIP_CENTER_Y <const> = 84
-local LINE_Y <const> = 114
-local LABEL_TOP <const> = 130
-local COUNTER_CENTER_Y <const> = 182
-local SCROLLBAR_Y <const> = 196
+local DIRECTION_CENTER_Y <const> = 47
+local DIRECTION_RULE_Y <const> = 61
+local CHIP_CENTER_Y <const> = 88
+local LINE_Y <const> = 116
+local LABEL_TOP <const> = 132
+local COUNTER_CENTER_Y <const> = 184
+local SCROLLBAR_Y <const> = 198
 
 local CRANK_PIXELS_PER_DEGREE <const> = 1.6
 local PAN_SMOOTHING <const> = 0.35
@@ -114,6 +114,48 @@ local function logicalIndexForElapsed(offsets, elapsed)
 		end
 	end
 	return nil
+end
+
+-- Today's departures for the active direction, earliest first. Entries can
+-- carry an empty string for one direction (a trip that only runs the other
+-- way), and 36 of the 107 routes have no Sunday service at all, so "nothing
+-- here" is a normal answer rather than a data problem.
+local function departuresToday()
+	if route.timetable == nil then return {} end
+	local day = route.timetable[scheduleKeyForToday()]
+	if day == nil then return {} end
+
+	local field = (dirKey == "out") and "departure_out" or "departure_in"
+	local times = {}
+	for _, entry in ipairs(day.entries or {}) do
+		local value = entry[field]
+		if value ~= nil and value ~= "" then
+			local seconds = parseHHMM(value)
+			if seconds ~= nil then
+				table.insert(times, { label = value, seconds = seconds })
+			end
+		end
+	end
+	table.sort(times, function(a, b) return a.seconds < b.seconds end)
+	return times
+end
+
+-- What to say when no bus is on the line. "No buses running right now" is
+-- true but reads like a broken screen; on a route with a 35 minute headway
+-- and a 28 minute run there's genuinely nothing in transit a fifth of the
+-- time, and the useful thing to show is when that changes.
+local function noBusesText()
+	local times = departuresToday()
+	if #times == 0 then return "no service today" end
+
+	local now = playdate.getTime()
+	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
+	for _, departure in ipairs(times) do
+		if departure.seconds > nowSeconds then
+			return "next departure " .. departure.label
+		end
+	end
+	return "last departure was " .. times[#times].label
 end
 
 -- Every trip that should currently be somewhere on this line, as
@@ -291,7 +333,7 @@ local function drawRouteLine()
 	end
 
 	if #trips == 0 then
-		Theme.textCentered("no buses running right now", Theme.WIDTH // 2, CHIP_CENTER_Y,
+		Theme.textCentered(noBusesText(), Theme.WIDTH // 2, CHIP_CENTER_Y,
 			kTextAlignment.center, Theme.FONT_SMALL)
 	end
 

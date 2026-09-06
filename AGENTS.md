@@ -7,20 +7,41 @@ transit, on Panic's [Playdate](https://play.date) handheld.
 
 The app is fully offline. It never shows live vehicle positions and never
 makes a network call while browsing. Wi-Fi exists for exactly one thing: an
-explicit **sync** that downloads a full data snapshot and stores it on the
-device with `playdate.datastore`. Every screen after that reads local data
-only — no per-screen fetches, no loading spinners tied to the network.
+explicit **sync** that downloads a full data snapshot to a file on the
+device. Every screen after that reads local data only — no per-screen
+fetches, no loading spinners tied to the network.
 
-- Sync calls `GET /api/playdate/export` (see below) once via
-  `playdate.network.http`, `json.decode`s the response, and
-  `playdate.datastore.write`s the decoded table plus a `synced_at`
-  timestamp. Subsequent boots `playdate.datastore.read` that table — fast,
-  no JSON parsing, no network.
+**The export is ~1MB, and that size dictates the whole design.** Measured
+against the live endpoint: 991 KB, 107 routes, 793 stops.
+
+- `lib/api.lua`'s `Api.download` streams the response body straight to a
+  file, a chunk per read callback. It never builds the body as a Lua string
+  and never decodes it.
+- **Do not put the snapshot in `playdate.datastore`.** `datastore.write`
+  serializes the table back to JSON, and doing that to a megabyte of routes
+  blocked the update loop long enough for the device to report *"loop
+  stalled for more than 10s"*. The original version decoded the response and
+  wrote it to the datastore, which is decode + encode + write of ~1MB inside
+  one frame. The datastore is still right for the small stuff — favourites,
+  and the `synced_at` timestamp — which is what it's used for now.
+- `Store.load()` does the one remaining decode, `json.decodeFile` on
+  `snapshot.json`. That measured **22 ms in the Simulator**, so parsing was
+  never the problem; re-encoding was.
+- A download lands on `snapshot.download` and is only renamed into place on
+  success, so a failed sync leaves the previous snapshot intact instead of
+  truncating it.
+- Timing, measured through the Simulator: ~5.2s total, of which the first
+  **~4s is DNS, TLS and the server building the export** — the first read
+  callback lands at ~3965 ms and all 991 KB arrives in the last ~1.2s. That
+  is why `SyncScene` says "Connecting" until the first byte and only then
+  switches to "Downloading" with a progress bar; a bar sitting at zero for
+  four seconds reads as a hang.
 - The Simulator routes network calls through the host machine directly, so
-  it's a reasonable stand-in for a Wi-Fi-connected device.
+  it's a reasonable stand-in for a Wi-Fi-connected device — but it is on a
+  much faster link, so treat its timings as a floor.
 - Main Menu shows `synced_at` and prompts to re-sync if it's over a day old
-  (see Screens). Sync itself needs a loading/error/retry state; nothing else
-  does.
+  (see Screens). Sync itself needs connecting/downloading/reading/error
+  states; nothing else does.
 - No fallback data ships in the `.pdx` — first launch has nothing to browse
   until the first sync completes. Worth a bundled fallback snapshot later if
   that first-run gap is annoying in practice.
@@ -63,26 +84,98 @@ Main Menu: synced-N-ago banner, ★ favorite route, ★ favorite stop,
    └──▶ Stop List  ──▶ Stop Detail: routes serving it, each w/ timetable
 ```
 
-Route Detail is not decorative animation — the crank pans a flat line of
-named stops (all of them, not a windowed subset), and one bus icon is drawn
-per currently-scheduled trip at its approximate position: today's
-`timetable` departure time for the active direction, plus each stop's
-cumulative `offset_seconds`, gives an elapsed-time interpolation between the
-two stops a trip should currently be between. A route with frequent headway
-can show several buses at once; outside service hours it shows none. This
-is still fully offline — it's schedule math against the device's clock, not
-live vehicle data.
+Route Detail is not decorative animation — the line pans across a flat row
+of named stops, and one bus icon is drawn per currently-scheduled trip at
+its approximate position: today's `timetable` departure time for the active
+direction, plus that stop's entry in the current hour's
+`hourly_offset_seconds` array, gives an elapsed-time interpolation between
+the two stops a trip should currently be between. A route with frequent
+headway can show several buses at once; outside service hours it shows none.
+This is still fully offline — it's schedule math against the device's clock,
+not live vehicle data.
 
-Stop names render diagonally below the line (an offscreen image per unique
-name, drawn with `image:drawRotated`) instead of horizontally, so stops sit
-close together (currently `SPACING = 56`) without every name needing to be
-truncated to fit its own slice. Each stop also shows "Nm" above the line:
-minutes of schedule distance from one reference active trip (the first one
-in `activeTrips()` — with several buses running there's no single correct
-reference, first is just the simplest choice). `LABEL_ANGLE`'s sign
-(clockwise-vs-counterclockwise cascade direction) was picked by reasoning
-about the rotation math, not by looking at a render — flip its sign if the
-labels cascade the wrong way on screen.
+**An empty line is usually correct, not a bug.** Route 57 on a Sunday runs a
+~35 minute headway over a ~28 minute route, so for roughly a fifth of the
+day nothing is in transit; 36 of the 107 routes have no Sunday service at
+all and 33 none on Saturday. The export itself is clean — offset arrays
+always match their stop counts, all 24 hours are present, offsets are
+monotonic — so when the line is empty, say why: `noBusesText()` in
+`RouteScene` shows "next departure 11:05", "last departure was 19:35", or
+"no service today" rather than a bare "no buses running right now", which
+reads like a broken screen.
+
+Only **three stops are on screen at a time**. Each owns a 132px slot and
+draws its name horizontally, wrapped over up to two lines, inside 124px of
+it — so a label can never be wider than its slot and two labels can never
+collide, whatever the synced name turns out to be. 124px is not arbitrary:
+`Memorandumului`, the longest single word in the Cluj stop list, measures
+123px in `Theme.FONT_BIG`. An earlier version fitted a dozen stops on at
+once by rendering names diagonally at 11px; it was unreadable, and it
+overlapped. Fewer stops and a bigger face is the deliberate trade. Each stop
+also shows "Nm" above the line: minutes of schedule distance from one
+reference active trip (the first one in `activeTrips()` — with several buses
+running there's no single correct reference, first is just the simplest
+choice).
+
+### The look is one file
+
+`lib/theme.lua` owns every visual decision: four fonts with fixed roles, the
+header/content/footer split every scene uses, and the widgets scenes are
+assembled from (`Theme.row`, `Theme.badge`, `Theme.header`, `Theme.footer`,
+the scrollbars, `Theme.emptyState`). **Scenes do not invent their own chrome
+or their own type scale.** If a screen needs something new it goes in
+`Theme` so every screen gets it — that's what stops the app drifting back
+into five screens that each look like a different app.
+
+Fonts, by role, and nothing else draws text:
+
+| Constant | Font | `getHeight()` | digit ink | Used for |
+|---|---|---|---|---|
+| `FONT_TITLE` | Roobert 11 Bold | 22 | rows 2–16 (15px) | headers, badges, hour column |
+| `FONT_BODY` | system font | 20 | rows 1–14 (14px) | list rows, timetable cells |
+| `FONT_BIG` | Asheville Sans 14 Bold | 20 | rows 1–14 (14px) | stop names on the route line |
+| `FONT_SMALL` | Noble Sans 8×9 | 9 | rows 1–7 (7px) | footer hints, chips, accessories |
+
+**`getHeight()` is the line box, not the glyphs, and the difference is large
+enough to wreck a layout.** Roobert reports 22px for an 11px-looking face.
+Sizing a badge as `getHeight() + 6` gave a 28px box — exactly the height of
+the whole header bar, and taller than a 21px timetable row, which it visibly
+overlapped. The ink also sits about 2px *above* the box's middle, so
+centering on `getHeight()` alone draws every label slightly high.
+
+`Theme` therefore carries an `INK` table of measured `{top, height}` per
+font: `Theme.textCentered` centers the ink rather than the box, and
+`Theme.badgeHeight` sizes from it (23px for `FONT_TITLE`). The numbers came
+from rendering digits offscreen and scanning rows for black pixels with
+`image:sample()` — if a font is swapped, re-measure rather than guess.
+
+Where a badge still won't fit — the timetable's 21px hour rows — use a
+different marker instead of shrinking it: the current hour gets a caret in
+the left margin, which costs no vertical room and leaves the black fill to
+mean "selected".
+
+### Ordering
+
+`Store.load()` sorts routes and stops once, right after decoding, so every
+screen and every count agrees rather than each list sorting its own way.
+Both use `Text.sortKey`, which strips diacritics, lowercases, and zero-pads
+every run of digits to six places. That turns natural ordering back into a
+plain string compare: `25` before `25N` before `26` before `100`, and the M-prefixed
+metropolitan routes land after the numbered ones because digits sort before
+letters in ASCII. Verified against the live data — the list starts
+`1 3 4 5 5N 6 7 8 8L 9 10 12 14 18` and ends `M51 M51U M52 M61 M71 M81`.
+Sorting is decorate-sort-undecorate (`Store.sortInPlace`); building the key
+inside the comparator would redo that work on every one of the ~7000
+comparisons 793 stops need.
+
+Icons come from [pixelarticons](https://github.com/halfmage/pixelarticons)
+(MIT). The SVGs used are vendored in `tools/pixelarticons/` and rasterized
+to 1-bit PNGs by `tools/icons.py` (pure Python, no dependencies — the pack
+is axis-aligned rectangles on a 24×24 grid, so a scanline fill reproduces it
+exactly). Re-run `python tools/icons.py` after changing that file's `ICONS`
+table; `lib/icons.lua` loads the results. A curve-based pack like Lucide was
+the wrong choice here: downscaled vectors turn to mush on a 1-bit screen,
+and these are already pixel art.
 
 Text rendering notes:
 
@@ -93,33 +186,46 @@ Text rendering notes:
 - `gfx.drawTextInRect(text, x, y, w, h, ...)` produced no visible output at
   all in testing (v3.1.1 Simulator) despite matching the documented
   signature — `gfx.drawTextAligned` and `gfx.drawText` did not have this
-  problem. Prefer those two; if a bounded/truncating box is genuinely
-  needed, verify `drawTextInRect` renders anything before relying on it, or
-  use `Text.truncate(s, maxLen)` plus a plain draw instead.
-- Use `playdate.ui.gridview` (`CoreLibs/ui`) for scrollable lists rather
-  than hand-rolled scroll/selection math — see `screens/listscreen.lua`. It
-  handles clipping and animated scroll for free.
-- `drawTextAligned`/`drawText` are unclipped — nothing stops adjacent
-  labels from overlapping (found this the hard way: stop names at fixed
-  `SPACING` intervals along Route Detail's line rendered as unreadable
-  overlapping soup once long names exceeded the gap between stops).
-  `Text.truncateToWidth(s, maxWidth)` measures with `gfx.getTextSize` and
-  truncates to fit — use it for any label sharing horizontal space with
-  neighbors, not just where a bounding box would have caught it.
+  problem. That's why `Text.wrapToWidth()` is hand-rolled rather than
+  leaning on the SDK's wrapping.
+- `drawTextAligned`/`drawText` are unclipped — nothing stops adjacent labels
+  from overlapping. `Text.truncateToWidth(s, maxWidth, font)` and
+  `Text.wrapToWidth(s, maxWidth, maxLines, font)` measure **in the font the
+  text will actually be drawn in** and cut to fit; measuring in one font and
+  drawing in another is exactly how labels end up colliding. Every widget in
+  `Theme` already does this, so anything built out of `Theme` is safe by
+  construction.
+- Use `playdate.ui.gridview` (`CoreLibs/ui`) for long scrollable lists — see
+  `scenes/ListScene.lua`. `Noble.Menu` is a gridview subclass but draws every
+  item at once, which is right for the four-item Main Menu and wrong for a
+  hundred routes.
 
-Controls: d-pad up/down moves the selection, crank fast-scrolls long lists
-(proportional, not per-notch), A drills in, B goes back one screen. Menu
-button stays reserved for the system menu.
+Controls: A drills in, B goes back one screen, the crank scrolls (lists) or
+free-pans (the route line). On the route line left/right steps one stop and
+up/down flips direction — the line is horizontal, so left/right moving along
+it is the only mapping that reads right. Menu button stays reserved for the
+system menu, which is where "favorite route"/"favorite stop" live: the four
+buttons are all spoken for, and per-screen extras are what that menu is for.
+
+The timetable needs two things from one d-pad — switch day, and pick a
+departure — so **focus moves between the tab strip and the grid** instead of
+adding a modifier. Left/Right switches day on the tabs and steps departure
+to departure in the grid (rolling over between hours); Up from the top row
+returns to the tabs, Down from the tabs enters the grid. The active tab
+grows a ring while it has focus, and the footer hints change with it. The
+grid opens on the next departure after the current time, not at the top.
 
 All data below comes from local storage after sync — see New Endpoint.
 
-| Screen | Shows |
+| Scene | Shows |
 |---|---|
-| Main Menu | `synced_at`, recommend re-sync if >24h old; favorite route/stop shortcuts (empty state if none set yet); All Routes / All Stops |
-| Route List | all routes, short/long name, color |
-| Route Detail | crank-scrollable stop line, schedule-approximated buses, CTP timetable (hour-grouped grid, day tabs, like the web app's `RouteView`); button/menu-item to set as favorite |
-| Stop List | all stop names, sorted client-side |
-| Stop Detail | routes serving the stop, each with its timetable; set as favorite |
+| `SyncScene` | the only screen that touches the network; status, error, A to retry |
+| `MainMenuScene` | `synced_at` banner (warns if >24h old); favorite route/stop rows, showing the favorite's name once set; All Routes / All Stops with counts |
+| `ListScene` | both lists — routes (number badge + long name), stops (pin + name); remembers its selected row across a drill-down |
+| `RouteScene` | three-stop window of the line, schedule-approximated buses, direction toggle, position readout |
+| `TimetableScene` | day tabs + hour-grouped grid; **every departure is individually selectable**, and A on one opens `TripScene` |
+| `TripScene` | one departure, stop by stop: what time "the 13:37" reaches every stop on the way |
+| `StopScene` | placeholder until Stop Detail is built; real chrome, so it doesn't look broken |
 
 Favorites are on-device only (`playdate.datastore`, a separate small file
 from the synced snapshot) — a route/stop ID plus enough to render the Main
@@ -200,18 +306,40 @@ Notes:
 
 ## App Architecture
 
-- `source/lib/api.lua` — wraps the `net.http.new`/`get`/callback dance from
-  the current smoke test into `api.get(path, onSuccess, onError)`. Used only
-  by the sync screen; no other screen touches the network.
-- `source/lib/store.lua` — `sync()` (calls `api.get`, decodes, writes the
+[Noble Engine](https://noblerobot.github.io/NobleEngine) (MIT) runs the show:
+scene lifecycle, the update loop, input routing, and transitions. It's
+vendored at `source/libraries/noble/` (commit `93ffd6e`) rather than
+submoduled, pruned of the docs and the Noble Robot logo so `pdc` only sees
+things it can compile. Upstream expects exactly that path, so don't move it.
+
+- Every screen is a `NobleScene` subclass in `source/scenes/`, with
+  `init`/`start`/`update`/`drawBackground`/`exit` and a scene-level
+  `inputHandler` table. Scenes draw their whole screen in `drawBackground`
+  and own no sprites.
+- `source/lib/nav.lua` — the back stack Noble doesn't have. `Nav.push` /
+  `Nav.pop` / `Nav.reset` record the scene class plus the properties it was
+  entered with, so B can rebuild the previous screen. It also refuses to
+  move while a transition is running: Noble silently ignores a transition
+  requested mid-transition, and updating the stack anyway would leave B
+  going somewhere the user never was.
+- `Nav.start` passes `alwaysRedraw = true` in Noble's config **explicitly**.
+  Noble only calls `Graphics.sprite.setAlwaysRedraw` for keys present in the
+  config table you hand it, and the SDK default is off — with scenes that
+  draw everything in `drawBackground` and own no sprites, nothing ever marks
+  the screen dirty and the display freezes on the first frame after a
+  transition. This cost an afternoon; leave it in.
+- `source/lib/theme.lua` — every visual decision (see Screens above).
+- `source/lib/icons.lua` — loads the generated pixelarticons PNGs.
+- `source/lib/api.lua` — wraps the `net.http.new`/`get`/callback dance into
+  `Api.get(...)`. Used only by `SyncScene`; nothing else touches the network.
+- `source/lib/store.lua` — `sync()` (calls `Api.get`, decodes, writes the
   dataset + `synced_at` via `playdate.datastore`), `load()` (reads it back),
-  and favorite get/set helpers on their own datastore key.
-- A simple screen-stack: each screen is a plain table with `enter`,
-  `update`, `draw`, and button handlers; a nav stack drives B-to-go-back.
-  No need for a framework — `CoreLibs/object.lua` classes are enough if
-  screens want shared behavior (e.g. a scrollable-list base).
-- `CoreLibs/animation` / `CoreLibs/animator` for the Route Detail bus
-  (position + easing) rather than hand-rolled frame counters.
+  favorite get/set helpers, and `offsetsForHour()` (picks the right
+  `hourly_offset_seconds` array, falling back to the nearest hour present).
+
+`Noble.Text.FONT_MEDIUM` is `nil` — upstream points it at a font that was
+never finished and isn't in the repo. `Theme` defines its own font constants;
+don't reach for Noble's.
 
 ## Repo Map
 
@@ -220,24 +348,36 @@ conexiuni-cluj-playdate/
 ├── AGENTS.md
 ├── README.md
 ├── .gitignore
-├── .luarc.json            lua-language-server config
+├── .luarc.json               lua-language-server config
 ├── library/
-│   └── playdate-luacats/  git submodule: Lua type stubs for the SDK
+│   └── playdate-luacats/     git submodule: Lua type stubs for the SDK
 ├── source/
-│   ├── pdxinfo            name, bundleID, version
-│   ├── main.lua           entry point, update loop, screen stack
+│   ├── pdxinfo               name, bundleID, version
+│   ├── main.lua              imports + Nav.start; Noble owns the loop
+│   ├── libraries/noble/      vendored Noble Engine (MIT)
+│   ├── fonts/                Roobert 11 Bold, Asheville Sans 14 Bold (SDK)
+│   ├── images/icons/         generated by tools/icons.py -- don't hand-edit
 │   ├── lib/
-│   │   ├── api.lua        net.http request/callback wrapper (sync only)
-│   │   ├── store.lua      sync/load/favorites via playdate.datastore
-│   │   └── text.lua       strips Romanian diacritics before any drawText*
-│   └── screens/
-│       ├── sync.lua       the only screen that touches the network
-│       ├── mainmenu.lua   synced-at banner, favorites, All Routes/All Stops
-│       ├── listscreen.lua generic scrollable list (Route List, Stop List)
-│       ├── routedetail.lua stop line + animated bus + timetable
-│       └── comingsoon.lua placeholder (Stop Detail not built yet)
+│   │   ├── theme.lua         fonts, chrome, widgets: the whole visual system
+│   │   ├── nav.lua           back stack over Noble's one-way transitions
+│   │   ├── icons.lua         icon image loader/cache
+│   │   ├── text.lua          diacritics, width-aware truncation and wrapping
+│   │   ├── api.lua           net.http request/callback wrapper (sync only)
+│   │   └── store.lua         sync/load/favorites, hourly offset lookup
+│   └── scenes/
+│       ├── SyncScene.lua     the only screen that touches the network
+│       ├── MainMenuScene.lua synced-at banner, favorites, the two lists
+│       ├── ListScene.lua     both scrollable lists (routes and stops)
+│       ├── RouteScene.lua    three-stop window of the line + buses
+│       ├── TimetableScene.lua day tabs + selectable departure grid
+│       ├── TripScene.lua     one departure, stop by stop
+│       └── StopScene.lua     placeholder (Stop Detail not built yet)
 └── tools/
-    └── watch.ps1          rebuilds on source change (no watch mode in pdc)
+    ├── watch.ps1             rebuilds on source change (no watch mode in pdc)
+    ├── screenshots.ps1       renders every screen to screenshots/
+    ├── screenshots/main.lua  the harness screenshots.ps1 builds
+    ├── icons.py              pixelarticons SVG -> 1-bit PNG
+    └── pixelarticons/        the vendored SVGs it reads (MIT)
 ```
 
 ## Build And Run
@@ -268,43 +408,52 @@ LuaCATS stubs; `.luarc.json` points `workspace.library` at it and sets
 
 ## Current Status
 
-First offline-shaped build exists:
-
 - `GET /api/playdate/export` implemented in `conexiuni-cluj` (`backend/handlers/playdate_export.go`,
   `backend/models/playdate_export.go`). No dedicated cache table — it fans
   out over the already-cached `GetRoutes`/`GetTrips`/`GetStopTimes`/`GetTimetable`/`GetStops`,
   same tradeoff `stop_info` makes. **A running backend needs a restart to
   pick this endpoint up.**
-- Screen stack, `lib/api.lua`, `lib/store.lua`, and all screens except Stop
-  Detail: Sync, Main Menu, a generic List screen (Route List / Stop List),
-  Route Detail (scrolling stop line + animated bus + direction toggle +
-  timetable). Stop Detail is `ComingSoonScreen` for now — selecting a stop
-  (from the list or a favorite) shows a placeholder instead of crashing.
-- Favoriting a stop has no UI yet (only reads an existing favorite); setting
-  one from Route/Stop Detail isn't wired up.
+- Rebuilt on Noble Engine, with `lib/theme.lua` as the single visual system
+  and pixelarticons throughout. Every scene renders correctly with real
+  Romanian names — verified from actual renders via `tools/screenshots.ps1`,
+  not by eye over the code.
+- All scenes exist except Stop Detail, which is a styled placeholder.
+- Favorites can be set from the system menu on Route/Stop Detail, and the
+  Main Menu shows the favorite's name once one is set.
 
-Not yet verified in the Simulator — compiles clean (`pdc`) but hasn't been
-run end to end against a live sync.
+The sync path has been run end to end against the live endpoint through the
+Simulator: 991 KB downloaded, decoded, sorted and browsed, with the route
+list, timetable and trip times checked from real renders.
 
 Next:
 
-1. Run it, fix what breaks (field-name mismatches between the new Go struct
-   and the Lua consumer are the likeliest bug class here).
-2. Stop Detail, mirroring Route Detail's structure (list of routes serving
-   the stop, each with its timetable).
-3. Wire up "set as favorite" from Route Detail and (once built) Stop Detail.
-4. Later: on-device caching refinements, a bundled fallback snapshot for
-   first launch before any sync, `CoreLibs/animation` for the bus if the
-   hand-rolled frame counter feels stiff.
+1. Stop Detail: routes serving the stop, each with its timetable. Build it
+   out of `Theme.row` + a gridview, the way `ListScene` and `TripScene` do.
+2. Run it on hardware and confirm the sync timings hold there — the
+   Simulator is on a much faster link and CPU.
+3. Later: on-device caching refinements, a bundled fallback snapshot for
+   first launch before any sync.
 
 ## Testing And Verification
 
-No automated test suite. After changes:
+No unit tests. After changes:
 
 - `pdc source ConexiuniCluj.pdx` must exit `0`.
-- Launch `PlaydateSimulator`, confirm no crash, confirm the changed screen
-  behaves as expected. Only the sync screen touches the network (allow the
-  permission prompt on first run) — every other screen should work with
-  Wi-Fi off once a sync has happened at least once.
+- **If you touched anything that draws, run `tools/screenshots.ps1` and
+  look at the PNGs.** It builds a copy of `source/` with
+  `tools/screenshots/main.lua` as the entry point, boots the real engine
+  against fake data with the worst-case Romanian stop names, walks the whole
+  nav stack and writes a screenshot per screen to `screenshots/` (gitignored).
+  A runtime error is rendered into `ERROR.png` rather than lost to the
+  Simulator console, which a script can't read.
+
+  This exists because UI here was once shipped unlooked-at and the labels
+  overlapped. Reading the drawing code is not verification; the screenshots
+  are. Add a step to the harness's `steps` list when you add a screen.
+- Launch `PlaydateSimulator` by hand for anything input- or network-shaped.
+  Only `SyncScene` touches the network (allow the permission prompt on first
+  run) — every other screen works with Wi-Fi off once a sync has happened.
+- `python tools/icons.py` after changing its `ICONS` table; commit the
+  regenerated PNGs.
 - If a backend endpoint changes, keep this file and
   `conexiuni-cluj/docs/API.md` in sync.

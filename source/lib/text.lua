@@ -93,3 +93,20 @@ function Text.wrapToWidth(s, maxWidth, maxLines, font)
 	end
 	return lines
 end
+
+-- Sort key for natural (human) ordering: route "25N" belongs between "25" and
+-- "26", not between "2" and "3", and plain string comparison gets that wrong
+-- because it compares "1" against "0" of "100" character by character.
+--
+-- Zero-padding every run of digits to a fixed width turns the problem back
+-- into a plain string compare: "25N" -> "000025n", "100" -> "000100",
+-- "M11" -> "m000011". Digits sort before letters in ASCII, so numbered routes
+-- come before the M-prefixed metropolitan ones, which is the order the paper
+-- timetables use. Diacritics are stripped first so stop names sort the way
+-- they're drawn.
+function Text.sortKey(s)
+	if s == nil then return "" end
+	return (Text.clean(s):lower():gsub("%d+", function(digits)
+		return string.format("%06d", tonumber(digits))
+	end))
+end

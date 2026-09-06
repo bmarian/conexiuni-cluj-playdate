@@ -16,6 +16,7 @@ import "scenes/MainMenuScene"
 import "scenes/ListScene"
 import "scenes/RouteScene"
 import "scenes/TimetableScene"
+import "scenes/TripScene"
 import "scenes/StopScene"
 
 Noble.Text.setFont(Theme.FONT_BODY)

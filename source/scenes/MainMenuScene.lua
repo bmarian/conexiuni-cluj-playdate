@@ -16,6 +16,10 @@ local ROW_H <const> = 34
 
 local menu = nil
 local rows = {}
+-- Coming back from a detail screen rebuilds the scene (see lib/nav.lua), so
+-- the highlight is remembered here rather than resetting to the top row --
+-- same as the list screens do.
+local selectedRow = 1
 
 local function favoriteRoute()
 	return Store.favorites.route_id ~= nil and Store.findRoute(Store.favorites.route_id) or nil
@@ -83,6 +87,17 @@ function scene:init(__sceneProperties)
 	function menu:drawCell(_, row, _, selected, x, y, width, height)
 		Theme.row(y, height, selected, rows[row] or {})
 	end
+
+	menu:setSelectedRow(selectedRow)
+end
+
+local function moveSelection(delta)
+	if delta > 0 then
+		menu:selectNext(false, true)
+	else
+		menu:selectPrevious(false, true)
+	end
+	selectedRow = menu:getSelectedRow()
 end
 
 function scene:drawBackground()
@@ -108,8 +123,8 @@ function scene:drawBackground()
 end
 
 scene.inputHandler = {
-	upButtonDown = function() menu:selectPrevious(false, true) end,
-	downButtonDown = function() menu:selectNext(false, true) end,
+	upButtonDown = function() moveSelection(-1) end,
+	downButtonDown = function() moveSelection(1) end,
 	AButtonDown = function() menu:click() end,
 	BButtonDown = function()
 		-- Root screen: there's nothing to go back to, so B re-syncs.

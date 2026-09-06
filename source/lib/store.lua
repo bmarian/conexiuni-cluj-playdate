@@ -1,55 +1,129 @@
--- Local data: the synced transit snapshot and favorites. Everything here is
--- playdate.datastore-backed. See AGENTS.md "Networking" -- sync is the only
--- time this app touches the network.
+-- Local data: the synced transit snapshot and favorites.
+--
+-- The snapshot is a ~1MB JSON file the sync streams straight to disk (see
+-- lib/api.lua) and this decodes once, at load. It deliberately does NOT go
+-- through playdate.datastore: datastore.write re-encodes the whole table to
+-- JSON, and doing that to a megabyte of routes blocked the update loop long
+-- enough for the device to report "loop stalled for more than 10s". The
+-- datastore is still the right home for the small stuff -- favourites, and
+-- when the last sync happened -- which is what it's used for here.
+--
+-- See AGENTS.md "Networking" -- sync is the only time this app touches the
+-- network.
 
 Store = Store or {}
 
-Store.SYNC_HOST = "192.168.50.37"
-Store.SYNC_PORT = 6698
-Store.SYNC_USE_SSL = false
+Store.SYNC_HOST = "bus.bmarian.online"
+Store.SYNC_PORT = 443
+Store.SYNC_USE_SSL = true
 Store.SYNC_PATH = "/api/playdate/export"
 
-local DATA_FILE <const> = "transit_data"
+-- The snapshot, and the partial file a download writes before it's promoted.
+local DATA_PATH <const> = "snapshot.json"
+local DOWNLOAD_PATH <const> = "snapshot.download"
+-- playdate.datastore.write(t, "name") produces "name.json"; this is the file
+-- the pre-streaming version of sync left behind, worth reclaiming a megabyte
+-- from on the first launch after upgrading.
+local LEGACY_DATA_PATH <const> = "transit_data.json"
+
+local META_FILE <const> = "sync_meta"
 local FAVORITES_FILE <const> = "favorites"
 
-Store.data = nil -- { synced_at, generated_at, routes = {...}, stops = {...} }
+Store.data = nil     -- { generated_at, routes = {...}, stops = {...} }
+Store.syncedAt = nil -- epoch seconds of the last successful sync
 Store.favorites = { route_id = nil, stop_id = nil }
 
 -- load() reads whatever was persisted from a previous sync. Returns true if
--- there is data to browse.
+-- there is data to browse. The decode is the one expensive thing this app
+-- does; it happens here, at launch, rather than inside a frame.
 function Store.load()
-	Store.data = playdate.datastore.read(DATA_FILE)
 	Store.favorites = playdate.datastore.read(FAVORITES_FILE) or { route_id = nil, stop_id = nil }
-	return Store.data ~= nil
+
+	local meta = playdate.datastore.read(META_FILE)
+	Store.syncedAt = meta ~= nil and meta.synced_at or nil
+
+	if playdate.file.exists(LEGACY_DATA_PATH) then
+		playdate.file.delete(LEGACY_DATA_PATH)
+	end
+
+	if not playdate.file.exists(DATA_PATH) then
+		Store.data = nil
+		return false
+	end
+
+	local ok, decoded = pcall(json.decodeFile, DATA_PATH)
+	if not ok or decoded == nil or decoded.routes == nil then
+		-- A truncated or corrupt snapshot is worth throwing away: the app
+		-- will offer a re-sync rather than half-browsing it.
+		playdate.file.delete(DATA_PATH)
+		Store.data = nil
+		return false
+	end
+
+	-- The export arrives in the backend's order, which is neither numeric for
+	-- routes nor alphabetical for stops. Sorting once here means every screen
+	-- and every count agrees, rather than each list sorting its own way.
+	Store.sortInPlace(decoded.routes, function(route) return route.route_short_name end)
+	Store.sortInPlace(decoded.stops, function(stop) return stop.stop_name end)
+
+	Store.data = decoded
+	return true
 end
 
--- sync() fetches a fresh snapshot and persists it. onDone(ok, errorMessage).
-function Store.sync(onDone)
-	Api.get(Store.SYNC_HOST, Store.SYNC_PORT, Store.SYNC_USE_SSL, Store.SYNC_PATH, "Conexiuni Cluj sync",
-		function(decoded)
-			local seconds = playdate.getSecondsSinceEpoch()
-			decoded.synced_at = seconds
-			local ok = playdate.datastore.write(decoded, DATA_FILE)
-			if ok == false then
-				onDone(false, "could not save to device")
+-- Decorate-sort-undecorate: Text.sortKey strips diacritics and pads numbers,
+-- which is far too much work to redo on every comparison of 793 stops.
+function Store.sortInPlace(items, fieldOf)
+	if items == nil then return end
+
+	local keys = {}
+	for _, item in ipairs(items) do
+		keys[item] = Text.sortKey(fieldOf(item))
+	end
+	table.sort(items, function(a, b) return keys[a] < keys[b] end)
+end
+
+-- sync() downloads a fresh snapshot to disk. onDownloaded(ok, errorMessage)
+-- fires when the bytes are safely stored; the caller then calls Store.load()
+-- to decode them -- on its own frame, so the screen can say what it's doing
+-- instead of freezing mid-download.
+function Store.sync(onProgress, onDownloaded)
+	Api.download({
+		host = Store.SYNC_HOST,
+		port = Store.SYNC_PORT,
+		useSSL = Store.SYNC_USE_SSL,
+		path = Store.SYNC_PATH,
+		reason = "Conexiuni Cluj sync",
+		destination = DOWNLOAD_PATH,
+		onProgress = onProgress,
+		onSuccess = function()
+			-- Promote the download only once it's complete, so a failed sync
+			-- leaves the previous snapshot intact rather than truncating it.
+			if playdate.file.exists(DATA_PATH) then
+				playdate.file.delete(DATA_PATH)
+			end
+			local renamed, renameError = playdate.file.rename(DOWNLOAD_PATH, DATA_PATH)
+			if not renamed then
+				onDownloaded(false, "could not save: " .. tostring(renameError))
 				return
 			end
-			Store.data = decoded
-			onDone(true, nil)
+			Store.syncedAt = playdate.getSecondsSinceEpoch()
+			playdate.datastore.write({ synced_at = Store.syncedAt }, META_FILE)
+			onDownloaded(true, nil)
 		end,
-		function(err)
-			onDone(false, err)
-		end)
+		onError = function(message)
+			onDownloaded(false, message)
+		end,
+	})
 end
 
 -- syncedAgoText() is a short "synced Nh ago" string for the Main Menu banner,
 -- and whether it's stale enough to recommend a re-sync (>24h).
 function Store.syncedAgoText()
-	if Store.data == nil or Store.data.synced_at == nil then
+	if Store.syncedAt == nil then
 		return "never synced", true
 	end
 	local now = playdate.getSecondsSinceEpoch()
-	local deltaSeconds = now - Store.data.synced_at
+	local deltaSeconds = now - Store.syncedAt
 	local stale = deltaSeconds > 24 * 60 * 60
 
 	if deltaSeconds < 60 then

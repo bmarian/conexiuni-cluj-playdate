@@ -25,10 +25,15 @@ Theme.FONT_SMALL = Noble.Text.FONT_SMALL                            -- footer hi
 -- (Table fields, so no <const>: Lua 5.4 only allows that on locals.)
 Theme.WIDTH = 400
 Theme.HEIGHT = 240
-Theme.HEADER_H = 28
-Theme.CONTENT_TOP = 29
-Theme.CONTENT_BOTTOM = 209
-Theme.FOOTER_Y = 210
+-- 32 leaves 6px of air around a 20px badge; at 28 the badge filled the bar
+-- edge to edge and sat right on the divider.
+Theme.HEADER_H = 32
+Theme.CONTENT_TOP = 33
+-- The footer only holds one 9px row of hints, so it gives 4px back to the
+-- content -- which is what keeps the timetable at seven visible hours
+-- despite the taller header.
+Theme.CONTENT_BOTTOM = 213
+Theme.FOOTER_Y = 214
 Theme.MARGIN = 8
 
 --- Height available between the header rule and the footer rule.
@@ -36,21 +41,46 @@ function Theme.contentHeight()
 	return Theme.CONTENT_BOTTOM - Theme.CONTENT_TOP
 end
 
-local function textHeight(font)
-	return font:getHeight()
+-- Where the glyphs actually sit inside each font's line box, measured by
+-- rendering digits offscreen and scanning for ink (tools/screenshots can
+-- reproduce it; the numbers are in AGENTS.md). getHeight() is the whole box
+-- including leading -- 22px for an 11px-looking Roobert -- so sizing a badge
+-- from it produced a box as tall as the entire header and taller than a
+-- timetable row. The ink is also consistently a couple of pixels above the
+-- box's middle, so centering on getHeight() alone draws every label high.
+local INK = {
+	[Theme.FONT_TITLE] = { top = 2, height = 15 },
+	[Theme.FONT_BODY] = { top = 1, height = 14 },
+	[Theme.FONT_BIG] = { top = 1, height = 14 },
+	[Theme.FONT_SMALL] = { top = 1, height = 7 },
+}
+
+local function inkOf(font)
+	local ink = INK[font]
+	if ink ~= nil then return ink end
+	local height = font:getHeight()
+	return { top = 0, height = height }
 end
 
---- Draws `text` with its vertical center at `centerY` (drawTextAligned takes
---- a top edge, and every widget here thinks in centers).
+--- Draws `text` with the *ink* vertically centered on `centerY`
+--- (drawTextAligned takes a box top edge, and every widget here thinks in
+--- centers). Centering the ink rather than the box is what keeps a label
+--- looking level inside a badge, a filled row or the footer.
 function Theme.textCentered(text, x, centerY, alignment, font)
-	Noble.Text.draw(text, x, centerY - textHeight(font) // 2, alignment, false, font)
+	local ink = inkOf(font)
+	Noble.Text.draw(text, x, centerY - ink.top - ink.height // 2, alignment, false, font)
 end
 
 --- Width Theme.badge will take for this text, for callers that need to
 --- center one or lay out around it before drawing.
+--- Height of a badge drawn in this font. Sized to the glyphs, not the leading.
+function Theme.badgeHeight(font)
+	return inkOf(font or Theme.FONT_TITLE).height + 8
+end
+
 function Theme.badgeWidth(text, font)
 	font = font or Theme.FONT_TITLE
-	return math.max(font:getTextWidth(text) + 12, textHeight(font) + 6)
+	return math.max(font:getTextWidth(text) + 12, Theme.badgeHeight(font))
 end
 
 --- A rounded outline box around short text -- route numbers, day tabs, the
@@ -58,7 +88,7 @@ end
 --- what follows. Draws in white when `white` is true, for use on a filled row.
 function Theme.badge(x, centerY, text, font, white)
 	font = font or Theme.FONT_TITLE
-	local height = textHeight(font) + 6
+	local height = Theme.badgeHeight(font)
 	local width = Theme.badgeWidth(text, font)
 	local y = centerY - height // 2
 
@@ -85,7 +115,7 @@ function Theme.header(opts)
 	local right = Theme.MARGIN
 
 	if opts.badge ~= nil then
-		left = left + Theme.badge(Theme.MARGIN, centerY, opts.badge, Theme.FONT_TITLE) + Theme.MARGIN
+		left = left + Theme.badge(Theme.MARGIN, centerY, opts.badge, Theme.FONT_TITLE) + 14
 	end
 	if opts.icon ~= nil then
 		Icons.draw(opts.icon, 24, Theme.WIDTH - Theme.MARGIN - 24, centerY - 12)
@@ -167,14 +197,19 @@ end
 --- accessory text. The label gets whatever horizontal space the other three
 --- leave it and is truncated to exactly that, so rows never collide.
 ---
---- opts: { icon, badge, label, accessory, font }
+--- `width` defaults to the full screen; pass the cell width when the list is
+--- drawn narrower (to leave room for a scrollbar), or the accessory ends up
+--- drawn past the clip and loses its last character.
+---
+--- opts: { icon, badge, label, accessory, font, accessoryFont, width }
 function Theme.row(y, height, selected, opts)
 	local centerY = y + height // 2
 	local font = opts.font or Theme.FONT_BODY
+	local width = opts.width or Theme.WIDTH
 
 	if selected then
 		Graphics.setColor(Graphics.kColorBlack)
-		Graphics.fillRect(0, y, Theme.WIDTH, height)
+		Graphics.fillRect(0, y, width, height)
 		Graphics.setImageDrawMode(Graphics.kDrawModeFillWhite)
 	end
 
@@ -191,12 +226,13 @@ function Theme.row(y, height, selected, opts)
 
 	local right = Theme.MARGIN
 	if opts.accessory ~= nil then
-		local width = Theme.FONT_SMALL:getTextWidth(opts.accessory)
-		Theme.textCentered(opts.accessory, Theme.WIDTH - Theme.MARGIN, centerY, kTextAlignment.right, Theme.FONT_SMALL)
-		right = right + width + Theme.MARGIN
+		local accessoryFont = opts.accessoryFont or Theme.FONT_SMALL
+		local accessoryWidth = accessoryFont:getTextWidth(opts.accessory)
+		Theme.textCentered(opts.accessory, width - Theme.MARGIN, centerY, kTextAlignment.right, accessoryFont)
+		right = right + accessoryWidth + Theme.MARGIN
 	end
 
-	local available = Theme.WIDTH - x - right
+	local available = width - x - right
 	Theme.textCentered(
 		Text.truncateToWidth(Text.clean(opts.label or ""), available, font),
 		x, centerY, kTextAlignment.left, font
@@ -234,6 +270,22 @@ function Theme.scrollbarH(x, y, width, offset, visible, total)
 	local span = width - thumb
 	local position = span * offset // math.max(1, total - visible)
 	Graphics.fillRoundRect(x + position, y, thumb, 5, 2)
+end
+
+--- A determinate progress bar: outlined track, solid fill. `fraction` is
+--- 0..1 and is clamped, since a server's byte count and what we've actually
+--- written don't have to agree.
+function Theme.progressBar(x, y, width, fraction)
+	local height = 10
+	fraction = math.max(0, math.min(1, fraction or 0))
+
+	Graphics.setColor(Graphics.kColorBlack)
+	Graphics.setLineWidth(1)
+	Graphics.drawRoundRect(x, y, width, height, 3)
+	local filled = math.floor((width - 4) * fraction)
+	if filled > 0 then
+		Graphics.fillRoundRect(x + 2, y + 2, filled, height - 4, 2)
+	end
 end
 
 --- Centered icon-over-message block, for every "there's nothing here" state.

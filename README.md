@@ -38,6 +38,26 @@ rebuild to reload without relaunching:
 ./tools/watch.ps1
 ```
 
+## Screenshots
+
+Anything that draws should be checked from a render, not from the code.
+`tools/screenshots.ps1` builds a copy of `source/` with a harness as its
+entry point, boots the app against fake data, walks every screen and writes
+a PNG of each to `screenshots/`:
+
+```powershell
+./tools/screenshots.ps1
+```
+
+## Third-party
+
+- [Noble Engine](https://noblerobot.github.io/NobleEngine) (MIT), vendored
+  at `source/libraries/noble/` — scenes, transitions, input.
+- [pixelarticons](https://github.com/halfmage/pixelarticons) (MIT) — the
+  icon set. Sources in `tools/pixelarticons/`, rasterized to 1-bit PNGs by
+  `python tools/icons.py`.
+- Fonts in `source/fonts/` are Playdate SDK fonts (Roobert, Asheville).
+
 ## Editor autocomplete
 
 `playdate.*` is a native API with no Lua source, so a language server can't

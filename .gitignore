@@ -1,2 +1,5 @@
 *.pdx/
 .sentry-native/
+# Anchored: an unanchored 'screenshots/' would also hide tools/screenshots/.
+/screenshots/
+__pycache__/
