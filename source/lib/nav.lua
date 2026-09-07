@@ -32,6 +32,15 @@ function Nav.push(Scene, properties)
 	Noble.transition(Scene, DURATION, PUSH_TRANSITION, nil, properties)
 end
 
+-- Where a pop should put this scene back. Scenes are rebuilt rather than
+-- resumed, so one whose state has moved on since it was pushed -- the route
+-- line's focused stop, say -- records it here before pushing the next scene,
+-- or the round trip lands wherever it originally opened instead.
+function Nav.remember(properties)
+	if #stack == 0 then return end
+	stack[#stack].properties = properties
+end
+
 -- No-op at the root; the caller decides what B means there.
 function Nav.pop()
 	if not canMove() or #stack < 2 then return end

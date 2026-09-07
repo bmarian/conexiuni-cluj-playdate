@@ -1,6 +1,7 @@
 -- Route Detail: a flat schematic line of stops with buses drawn where the
 -- schedule says they should be right now (elapsed time since a departure,
--- against the hour's cumulative stop offsets -- never live vehicle data).
+-- against the cumulative stop offsets published for the hour that departure
+-- leaves in -- never live vehicle data).
 --
 -- Three stops are on screen at a time, each owning a 132px slot and drawing
 -- its name horizontally inside 120px of it, wrapped over two lines. That is
@@ -9,7 +10,8 @@
 -- rotated text this screen used to need to fit a dozen stops on at once.
 --
 -- Left/Right steps one stop along the line, the crank pans freely, Up/Down
--- flips direction, A opens the timetable.
+-- flips direction, A opens the timetable with every time shifted to the
+-- focused stop.
 --
 -- Scene properties: { route, dirKey (optional), stopId (optional) }.
 
@@ -43,7 +45,14 @@ local SCROLLBAR_Y <const> = 198
 local CRANK_PIXELS_PER_DEGREE <const> = 1.6
 local PAN_SMOOTHING <const> = 0.35
 
+local DAY_SECONDS <const> = 24 * 3600
+-- Past an hour and a half a chip has stopped being an arrival board and
+-- started being clutter; the stop's own screen carries the full list.
+local MAX_CHIP_SECONDS <const> = 90 * 60
+
 local route, dirKey, stops
+-- Today's trips for the active direction; see ensureTrips.
+local trips, tripsKey
 local worldX, targetX, focusIndex
 local favoriteMenuItem = nil
 
@@ -118,89 +127,122 @@ local function logicalIndexForElapsed(offsets, elapsed)
 	return nil
 end
 
--- Today's departures for the active direction, earliest first. Entries can
--- carry an empty string for one direction (a trip that only runs the other
--- way), and 36 of the 107 routes have no Sunday service at all, so "nothing
--- here" is a normal answer rather than a data problem.
-local function departuresToday()
-	if route.timetable == nil then return {} end
+-- Today's trips for the active direction, earliest first, as
+-- { departure, label, offsets }. A trip runs on the offsets published for the
+-- hour it leaves in rather than the hour it happens to be now, so each one
+-- carries its own table; the hourly lookup is memoised because a busy route
+-- publishes a hundred departures across a dozen distinct hours.
+--
+-- Entries can carry an empty string for one direction (a trip that only runs
+-- the other way), and 36 of the 107 routes have no Sunday service at all, so
+-- an empty list is a normal answer rather than a data problem.
+local function buildTrips()
+	local dir = direction()
+	if dir == nil or route.timetable == nil then return {} end
 	local day = route.timetable[Store.scheduleKeyForToday()]
 	if day == nil then return {} end
 
-	local field = (dirKey == "out") and "departure_out" or "departure_in"
-	local times = {}
+	local field = Store.departureField(dirKey)
+	local offsetsByHour = {}
+	local result = {}
 	for _, entry in ipairs(day.entries or {}) do
 		local value = entry[field]
 		if value ~= nil and value ~= "" then
-			local seconds = parseHHMM(value)
-			if seconds ~= nil then
-				table.insert(times, { label = value, seconds = seconds })
+			local departure = parseHHMM(value)
+			if departure ~= nil then
+				-- A night trip is published as "25:05"; it runs on the 01:00 offsets.
+				local hour = (departure // 3600) % 24
+				local offsets = offsetsByHour[hour]
+				if offsets == nil then
+					-- false, not nil, so a miss is not looked up again.
+					offsets = Store.offsetsForHour(dir, hour) or false
+					offsetsByHour[hour] = offsets
+				end
+				if offsets then
+					table.insert(result, { departure = departure, label = value, offsets = offsets })
+				end
 			end
 		end
 	end
-	table.sort(times, function(a, b) return a.seconds < b.seconds end)
-	return times
+	table.sort(result, function(a, b) return a.departure < b.departure end)
+	return result
+end
+
+-- Rebuilt only when the route, the direction or the day changes: it is a
+-- hundred-odd small tables and this screen redraws every frame.
+--
+-- The route has to be in the key. These are file locals shared by every
+-- instance of the scene, so a key of direction-and-day alone survived walking
+-- from one route to the next and drew the new line against the old route's
+-- departures -- silently, because a mismatched offsets array just fails
+-- `trip.offsets[#stops]` and reports an empty line.
+local function ensureTrips()
+	local key = route.route_id .. ":" .. (dirKey or "-") .. ":" .. Store.scheduleKeyForToday()
+	if trips == nil or tripsKey ~= key then
+		trips, tripsKey = buildTrips(), key
+	end
+end
+
+-- Seconds until the next bus reaches stop `index`, or nil when the wait is
+-- longer than a chip is worth showing.
+--
+-- Every trip counts, not only the ones already on the line: a stop near the
+-- start terminus is waiting on a bus that has not left yet, and the trip that
+-- rolled through ten minutes ago tells you nothing about when to be here.
+local function secondsUntilNextBus(index, nowSeconds)
+	local soonest
+	for _, trip in ipairs(trips) do
+		local offset = trip.offsets[index]
+		if offset ~= nil then
+			-- Modulo rather than a signed difference, so a trip that has already
+			-- called here is most of a day out instead of a negative wait that
+			-- would win the comparison, and a "25:05" departure reads as minutes
+			-- away at 01:00 instead of a day.
+			local away = (trip.departure + offset - nowSeconds) % DAY_SECONDS
+			if soonest == nil or away < soonest then soonest = away end
+		end
+	end
+	if soonest == nil or soonest > MAX_CHIP_SECONDS then return nil end
+	return soonest
 end
 
 -- What to say when no bus is on the line. "No buses running right now" is
 -- true but reads like a broken screen; on a route with a 35 minute headway
 -- and a 28 minute run there's genuinely nothing in transit a fifth of the
 -- time, and the useful thing to show is when that changes.
-local function noBusesText()
-	local times = departuresToday()
-	if #times == 0 then return "no service today" end
-
-	local now = playdate.getTime()
-	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
-	for _, departure in ipairs(times) do
-		if departure.seconds > nowSeconds then
-			return "next departure " .. Text.clockLabel(departure.label)
+local function noBusesText(nowSeconds)
+	if #trips == 0 then return "no service today" end
+	for _, trip in ipairs(trips) do
+		if trip.departure > nowSeconds then
+			return "next departure " .. Text.clockLabel(trip.label)
 		end
 	end
-	return "last departure was " .. Text.clockLabel(times[#times].label)
+	return "last departure was " .. Text.clockLabel(trips[#trips].label)
 end
 
--- Every trip that should currently be somewhere on this line, as
--- { logicalIndex, elapsed }. A frequent route has several at once; outside
--- service hours there are none.
-local function activeTrips()
-	if #stops < 2 or route.timetable == nil then return {}, nil end
+-- Fractional stop indices for every trip that should be somewhere on this line
+-- right now. A frequent route has several at once; outside service hours there
+-- are none.
+local function busPositions(nowSeconds)
+	if #stops < 2 then return {} end
 
-	local day = route.timetable[Store.scheduleKeyForToday()]
-	if day == nil then return {}, nil end
-
-	local now = playdate.getTime()
-	local offsets = Store.offsetsForHour(direction(), now.hour)
-	if offsets == nil then return {}, nil end
-
-	local totalDuration = offsets[#stops]
-	if totalDuration == nil or totalDuration <= 0 then return {}, offsets end
-
-	local field = (dirKey == "out") and "departure_out" or "departure_in"
-	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
-
-	local trips = {}
-	for _, entry in ipairs(day.entries or {}) do
-		local departure = entry[field]
-		if departure ~= nil and departure ~= "" then
-			local parsed = parseHHMM(departure)
-			if parsed ~= nil then
-				local elapsed = nowSeconds - parsed
-				-- A night departure is published as "25:05" and the clock says
-				-- 01:10, so elapsed comes out about minus a day. Rolling it
-				-- forward finds the trip; a genuinely future departure still
-				-- lands way past totalDuration and is filtered out below.
-				if elapsed < 0 then elapsed = elapsed + 24 * 3600 end
-				if elapsed >= 0 and elapsed <= totalDuration then
-					local index = logicalIndexForElapsed(offsets, elapsed)
-					if index ~= nil then
-						table.insert(trips, { logicalIndex = index, elapsed = elapsed })
-					end
-				end
+	local positions = {}
+	for _, trip in ipairs(trips) do
+		local total = trip.offsets[#stops]
+		if total ~= nil and total > 0 then
+			local elapsed = nowSeconds - trip.departure
+			-- A night departure is published as "25:05" and the clock says 01:10,
+			-- so elapsed comes out about minus a day. Rolling it forward finds the
+			-- trip; a genuinely future departure still lands way past total and is
+			-- filtered out below.
+			if elapsed < 0 then elapsed = elapsed + DAY_SECONDS end
+			if elapsed <= total then
+				local index = logicalIndexForElapsed(trip.offsets, elapsed)
+				if index ~= nil then table.insert(positions, index) end
 			end
 		end
 	end
-	return trips, offsets
+	return positions
 end
 
 function scene:init(__sceneProperties)
@@ -208,6 +250,8 @@ function scene:init(__sceneProperties)
 
 	route = __sceneProperties.route
 	favoriteMenuItem = nil
+	-- Shared with every other instance of this scene; see ensureTrips.
+	trips, tripsKey = nil, nil
 
 	-- Stop Detail knows which direction you picked; honour it rather than
 	-- always opening outbound.
@@ -231,6 +275,19 @@ end
 
 local function favoriteLabel()
 	return Store.isFavoriteRoute(route.route_id) and "unfavorite route" or "favorite route"
+end
+
+-- A pop rebuilds this scene from the properties left on the nav stack, and the
+-- ones it was pushed with name whatever stop it opened on. Anything that
+-- leaves the screen records the stop you are leaving from first, so coming
+-- back puts the line where you had panned it rather than at the terminus.
+local function rememberPosition()
+	local stop = stops[focusIndex]
+	Nav.remember({
+		route = route,
+		dirKey = dirKey,
+		stopId = stop ~= nil and stop.stop_id or nil,
+	})
 end
 
 function scene:start()
@@ -305,16 +362,19 @@ local function drawDirectionRow()
 	Graphics.drawLine(0, DIRECTION_RULE_Y, Theme.WIDTH, DIRECTION_RULE_Y)
 end
 
-local function drawStop(index, stop, offsets, reference)
+local function drawStop(index, stop, nowSeconds, withChip)
 	local x = stopScreenX(index)
 	-- A slot is drawn only when its whole label box is on screen, so nothing
 	-- is ever half-cut at the edges.
 	if x < -SPACING or x > Theme.WIDTH + SPACING then return end
 
-	-- Minutes of schedule distance from the reference trip.
-	if reference ~= nil and offsets ~= nil and offsets[index] ~= nil then
-		local label = math.floor(math.abs(offsets[index] - reference.elapsed) / 60 + 0.5) .. "m"
-		Theme.badge(x - Theme.badgeWidth(label, Theme.FONT_SMALL) // 2, CHIP_CENTER_Y, label, Theme.FONT_SMALL)
+	-- Minutes until the next bus calls here.
+	if withChip then
+		local away = secondsUntilNextBus(index, nowSeconds)
+		if away ~= nil then
+			local label = math.floor(away / 60 + 0.5) .. "m"
+			Theme.badge(x - Theme.badgeWidth(label, Theme.FONT_SMALL) // 2, CHIP_CENTER_Y, label, Theme.FONT_SMALL)
+		end
 	end
 
 	-- Node: terminus stops are solid, the focused one is ringed.
@@ -357,27 +417,29 @@ local function drawBus(logicalIndex)
 end
 
 local function drawRouteLine()
-	local trips, offsets = activeTrips()
-	-- The "Nm" chips are measured against one reference trip: with several
-	-- buses running there is no single right answer, and the first active
-	-- trip is the simplest choice.
-	local reference = trips[1]
+	local now = playdate.getTime()
+	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
+	ensureTrips()
+	local buses = busPositions(nowSeconds)
 
 	Graphics.setColor(Graphics.kColorBlack)
 	Graphics.setLineWidth(2)
 	Graphics.drawLine(0, LINE_Y, Theme.WIDTH, LINE_Y)
 	Graphics.setLineWidth(1)
 
+	-- The chips and the "no buses" line share the band above the route, so
+	-- only ever one of them is on screen.
+	local withChips = #buses > 0
 	for index, stop in ipairs(stops) do
-		drawStop(index, stop, offsets, reference)
+		drawStop(index, stop, nowSeconds, withChips)
 	end
 
-	for _, trip in ipairs(trips) do
-		drawBus(trip.logicalIndex)
+	for _, logicalIndex in ipairs(buses) do
+		drawBus(logicalIndex)
 	end
 
-	if #trips == 0 then
-		Theme.textCentered(noBusesText(), Theme.WIDTH // 2, CHIP_CENTER_Y,
+	if not withChips then
+		Theme.textCentered(noBusesText(nowSeconds), Theme.WIDTH // 2, CHIP_CENTER_Y,
 			kTextAlignment.center, Theme.FONT_SMALL)
 	end
 
@@ -424,9 +486,16 @@ scene.inputHandler = {
 	upButtonDown = function() toggleDirection() end,
 	downButtonDown = function() toggleDirection() end,
 	AButtonDown = function()
-		if dirKey ~= nil then
-			Nav.push(TimetableScene, { route = route, dirKey = dirKey })
-		end
+		if dirKey == nil then return end
+		rememberPosition()
+		-- The timetable reads as arrivals at the stop you were looking at, not
+		-- departures from a terminus you may be nowhere near.
+		local stop = stops[focusIndex]
+		Nav.push(TimetableScene, {
+			route = route,
+			dirKey = dirKey,
+			stopId = stop ~= nil and stop.stop_id or nil,
+		})
 	end,
 	BButtonDown = function() Nav.pop() end,
 	cranked = function(change)

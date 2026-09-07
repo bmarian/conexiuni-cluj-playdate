@@ -120,7 +120,7 @@ function scene:drawBackground()
 
 	Theme.header({
 		title = title,
-		icon = options.icon or (key == "routes" and "bus" or "map-pin"),
+		icon = options.icon,
 	})
 
 	if #items == 0 then

@@ -123,7 +123,6 @@ function scene:drawBackground()
 		-- The raw value can be "25:05".
 		title = "Departing " .. Text.clockLabel(departure),
 		badge = Text.clean(route.route_short_name),
-		icon = "clock",
 	})
 
 	local direction = route.directions[dirKey]

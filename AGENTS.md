@@ -74,22 +74,77 @@ its field names and sentinel conventions.
 Backend changes belong in `conexiuni-cluj`, not here. This repo is
 Lua/Playdate-only.
 
+### `directions.out` is served by `departure_in`
+
+The snapshot's two halves label directions with the same two words in opposite
+senses, and pairing them by name is wrong on every route:
+
+- The timetable is scraped from CTP-CJ, whose in/out labels have nothing to do
+  with Tranzy's direction ids. `alignTimetableToDirectionIDs` reconciles them,
+  and after it runs `departure_in` is the column for Tranzy `direction_id` 0.
+  `docs/API.md` is right and does not claim otherwise: it ties the columns to
+  `out_stop_name` / `in_stop_name`, the terminus each column departs from.
+- The Playdate export then walks directions as `{OUTGOING_SUFFIX, "out"},
+  {INCOMING_SUFFIX, "in"}` with `OUTGOING_SUFFIX = "_0"`, so the *geometry* it
+  publishes as `directions.out` is that same `direction_id` 0 — whose
+  departures live in the column called "in".
+
+So `directions.out` takes `departure_in` and `directions.in` takes
+`departure_out`. Measured over a live snapshot: 88 routes where
+`out_stop_name` matches the first stop of `directions.in`, **zero** the other
+way, 17 where the terminus names are spelled too differently to tell.
+`in_frequency` / `out_frequency` cross the same way — the backend swaps them
+alongside the departure columns.
+
+`Store.departureField()` and `Store.frequencyField()` are the only places that
+know this; nothing else may spell out a column name. If the export is ever
+changed to line the two up, flip those two functions and nothing else.
+
+Getting it wrong is quiet rather than loud, which is why it survived: the
+opposite direction of a two-way route is still a real timetable, so every
+screen renders plausible times that are simply not the ones you are standing
+there waiting for. Ground truth for the pairing — `directions.out` of route 32
+runs from Disp. Alverna, and its 08:55 departure appears in `departure_in`,
+with nothing matching it in `departure_out`.
+
+The fixture in `tools/screenshots/main.lua` sets the two columns ten minutes
+apart precisely so a wrong pairing moves the rendered times rather than
+cancelling out.
+
 ## Screens
 
 ```
 Main Menu: synced-N-ago banner, ★ favorite route, ★ favorite stop,
            all routes, all stops
    ├──▶ Route List ──▶ Route Detail: crank-scrollable stop line, buses
-   │                                 approximated from the schedule, timetable
+   │                                 approximated from the schedule
    └──▶ Stop List  ──▶ Stop Detail: routes serving it, each w/ timetable
 ```
+
+**A on the route line opens the timetable measured at the focused stop** —
+every cell is the time that trip calls *there*, not the time it leaves a
+terminus you may be nowhere near, which is the question you actually have
+standing at a stop. `TimetableScene` takes an optional `stopId` and shifts each
+departure by that stop's offset for the hour the trip departs in; the rows
+regroup by arrival hour, so a 07:54 departure that arrives at 08:04 moves into
+the 08 row. The full-line timetable is not a separate screen — stop 1 *is* the
+terminus, so focusing it and pressing A gives exactly the old grid. The raw
+departure string still rides along as `departure.time`, because that is what
+identifies a trip to `TripScene` whatever the cell shows.
+
+Coming back lands where you left. `Nav` rebuilds scenes rather than resuming
+them, so a scene whose state has moved on since it was pushed calls
+`Nav.remember()` with the properties it wants a pop to rebuild it from, before
+it pushes anything.
 
 Route Detail is not decorative animation — the line pans across a flat row
 of named stops, and one bus icon is drawn per currently-scheduled trip at
 its approximate position: today's `timetable` departure time for the active
-direction, plus that stop's entry in the current hour's
-`hourly_offset_seconds` array, gives an elapsed-time interpolation between
-the two stops a trip should currently be between. A route with frequent
+direction, plus that stop's entry in the `hourly_offset_seconds` array **for
+the hour that trip departs in** (not the hour it is now — a trip that left in
+the 07:00 rush runs on the 07:00 offsets for its whole run), gives an
+elapsed-time interpolation between the two stops a trip should currently be
+between. A route with frequent
 headway can show several buses at once; outside service hours it shows none.
 This is still fully offline — it's schedule math against the device's clock,
 not live vehicle data.
@@ -121,11 +176,40 @@ collide, whatever the synced name turns out to be. 124px is not arbitrary:
 `Memorandumului`, the longest single word in the Cluj stop list, measures
 123px in `Theme.FONT_BIG`. An earlier version fitted a dozen stops on at
 once by rendering names diagonally at 11px; it was unreadable, and it
-overlapped. Fewer stops and a bigger face is the deliberate trade. Each stop
-also shows "Nm" above the line: minutes of schedule distance from one
-reference active trip (the first one in `activeTrips()` — with several buses
-running there's no single correct reference, first is just the simplest
-choice).
+overlapped. Fewer stops and a bigger face is the deliberate trade.
+
+Each stop also shows "Nm" above the line: **minutes until the next bus
+reaches that stop**, the soonest arrival over every one of today's departures
+rather than only the trips already on the line — a stop near the start
+terminus is waiting on a bus that has not left yet, and the trip that rolled
+through ten minutes ago tells you nothing about when to be there. The wait is
+a modulo, not a signed difference, so a trip that has already called at a
+stop is most of a day out instead of a negative number that would win the
+comparison, and a "25:05" departure reads as minutes away at 01:00. Past
+`MAX_CHIP_SECONDS` (90 minutes) the chip is dropped.
+
+The chips are per-stop for a reason. An earlier version measured every chip
+against one reference trip and took `math.abs` of the difference, which got
+both halves wrong at once: the absolute value made a stop the bus had already
+passed count *down* as though it were approaching, and the reference was
+`trips[1]` — timetable order, so the earliest departure still running, which
+is the bus furthest along the line rather than the one nearest you.
+
+**Anything cached in a file local has to be keyed by the route id.** Scene
+state in this codebase lives in file locals, which every instance of that scene
+shares; `RouteScene` caches the day's trips because rebuilding a hundred small
+tables every frame is not free, and a first attempt keyed that cache on
+direction-and-day alone. Walking from one route to the next then redrew the new
+line against the old route's departures, and it failed *quietly* — a mismatched
+offsets array just makes `trip.offsets[#stops]` nil, every trip gets skipped,
+and the screen calmly reports an empty line and the wrong "next departure".
+`TimetableScene.remembered` gets this right; copy that shape.
+
+Consecutive chips are therefore not always ascending, and that is correct
+rather than a glitch: with two buses on screen the stops behind the leading
+bus are waiting on the trailing one, so 3m / 5m / 2m means "the bus you can
+see is 2 minutes from the third stop; if you are standing at the second one
+you have missed it, and the next is 5 minutes out".
 
 ### The look is one file
 
@@ -158,6 +242,15 @@ font: `Theme.textCentered` centers the ink rather than the box, and
 `Theme.badgeHeight` sizes from it (23px for `FONT_TITLE`). The numbers came
 from rendering digits offscreen and scanning rows for black pixels with
 `image:sample()` — if a font is swapped, re-measure rather than guess.
+
+Every `Theme.header` carries the wall clock in the top right. These are all
+schedule screens, and a "3m" chip or an 06:52 departure only means something
+next to the time it is counting from; reading it meant leaving the app. The
+clock is right-aligned inside a slot sized for the widest digits it could
+hold, so the title beside it does not shuffle sideways once a minute. It took
+the corner the decorative header icons used to sit in, so those were dropped
+— only icons saying something the title does not (a filled heart, the sync
+spinner) still get a slot, to the clock's left.
 
 Where a badge still won't fit — the timetable's 21px hour rows — use a
 different marker instead of shrinking it: the current hour gets a caret in
@@ -585,6 +678,10 @@ No unit tests. After changes:
   `tools/screenshots/main.lua` as the entry point, boots the real engine
   against fake data with the worst-case Romanian stop names, walks the whole
   nav stack and writes a screenshot per screen to `screenshots/` (gitignored).
+  The fake routes deliberately differ in stop count and pace. They all shared
+  one `directions` table once, which made the stale-cache bug above invisible
+  to the harness — with identical line shapes, the wrong route's schedule still
+  renders a plausible screen.
   A runtime error is rendered into `ERROR.png` rather than lost to the
   Simulator console, which a script can't read.
 

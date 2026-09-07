@@ -1,5 +1,10 @@
 -- Timetable for one route and direction: three day tabs and an hour-grouped
--- grid. Focus moves between the tabs and the grid. Properties: { route, dirKey }.
+-- grid. Focus moves between the tabs and the grid.
+--
+-- Properties: { route, dirKey, stopId (optional) }. With a stopId every cell
+-- is the time that trip calls at that stop rather than the time it leaves the
+-- terminus -- opened from the route line, the grid answers "when is a bus
+-- here", which is the question you had standing at the stop.
 
 TimetableScene = {}
 class("TimetableScene").extends(NobleScene)
@@ -28,6 +33,8 @@ local DAY_ORDER <const> = { "weekdays", "saturday", "sunday" }
 local DAY_LABELS <const> = { weekdays = "Mon-Fri", saturday = "Saturday", sunday = "Sunday" }
 
 local route, dirKey
+-- nil for the whole line; otherwise the stop every time is measured at.
+local stopIndex, stopName
 local dayKey, focus
 local rows = {}
 local selectedRow, selectedColumn = 1, 1
@@ -52,10 +59,32 @@ local function day()
 end
 
 local function departureField()
-	return (dirKey == "out") and "departure_out" or "departure_in"
+	return Store.departureField(dirKey)
 end
 
--- One row per hour, keeping the full "HH:MM" for TripScene.
+-- When this trip calls at the selected stop, as raw "HH", "MM" strings -- or
+-- the terminus departure itself when the scene was opened without a stop.
+--
+-- The hour stays raw and zero-padded ("25", and "26" for a trip that leaves at
+-- 25:50 and takes ten minutes) so rows still sort as strings and after 23;
+-- only the label wraps into clock hours.
+local function callAt(time)
+	local hour, minute = time:match("(%d+):(%d+)")
+	if hour == nil or stopIndex == nil then return hour, minute end
+
+	local departure = tonumber(hour) * 3600 + tonumber(minute) * 60
+	-- The offsets of the hour the trip leaves in, not of the hour it arrives:
+	-- a trip out of the 07:00 rush runs on the 07:00 offsets for its whole run.
+	local offsets = Store.offsetsForHour(route.directions[dirKey], (departure // 3600) % 24)
+	local offset = offsets ~= nil and offsets[stopIndex] or nil
+	if offset == nil then return hour, minute end
+
+	local arrival = departure + offset
+	return string.format("%02d", arrival // 3600), string.format("%02d", (arrival % 3600) // 60)
+end
+
+-- One row per hour, keeping the full departure "HH:MM" for TripScene -- that
+-- is what identifies the trip, whatever time the cell shows.
 local function buildRows()
 	rows = {}
 	local today = day()
@@ -65,13 +94,11 @@ local function buildRows()
 	for _, entry in ipairs(today.entries or {}) do
 		local time = entry[departureField()]
 		if time ~= nil and time ~= "" then
-			local hour, minute = time:match("(%d+):(%d+)")
+			local hour, minute = callAt(time)
 			if hour ~= nil then
 				byHour[hour] = byHour[hour] or {}
 				table.insert(byHour[hour], { minute = minute, time = time })
 			end
-			-- `hour` stays raw ("25") so the row sorts after 23; only the
-			-- label wraps.
 		end
 	end
 
@@ -177,7 +204,21 @@ function scene:init(__sceneProperties)
 	dirKey = __sceneProperties.dirKey
 	scene.super.init(self)
 
-	rememberKey = route.route_id .. ":" .. tostring(dirKey)
+	stopIndex, stopName = nil, nil
+	local direction = route.directions[dirKey]
+	if __sceneProperties.stopId ~= nil and direction ~= nil then
+		for index, stop in ipairs(direction.stops or {}) do
+			if stop.stop_id == __sceneProperties.stopId then
+				stopIndex, stopName = index, stop.stop_name
+				break
+			end
+		end
+	end
+
+	-- Position is remembered per stop too: the same grid shifted by ten minutes
+	-- is a different set of rows, and the row that was selected in one is not
+	-- the one you want in the other.
+	rememberKey = route.route_id .. ":" .. tostring(dirKey) .. ":" .. tostring(stopIndex)
 	local saved = remembered[rememberKey]
 	if saved == nil then
 		focus = FOCUS_GRID
@@ -240,7 +281,7 @@ local function drawGrid()
 		return
 	end
 
-	local frequency = today[(dirKey == "out") and "out_frequency" or "in_frequency"]
+	local frequency = today[Store.frequencyField(dirKey)]
 	if frequency ~= nil then
 		Theme.emptyState("clock",
 			string.format("every %d-%d min", frequency.min_minutes, frequency.max_minutes),
@@ -299,10 +340,17 @@ function scene:drawBackground()
 	scene.super.drawBackground(self)
 
 	local headsign = route.directions[dirKey] ~= nil and route.directions[dirKey].headsign or ""
+	-- The stop leads, because it is what the times are measured at and getting
+	-- that wrong makes the whole grid a lie; the headsign truncates first.
+	local title = "to " .. Text.clean(headsign)
+	if stopName ~= nil then
+		-- "<stop> - <destination>" reads as the leg it is, and dropping the
+		-- "to " buys back the width that was truncating the headsign away.
+		title = Text.clean(stopName) .. " - " .. Text.clean(headsign)
+	end
 	Theme.header({
-		title = "to " .. Text.clean(headsign),
+		title = title,
 		badge = Text.clean(route.route_short_name),
-		icon = "calendar",
 	})
 
 	drawTabs()

@@ -204,6 +204,38 @@ function Store.favoriteStops()
 	return result
 end
 
+-- Which timetable column serves a direction -- and it is not the one the two
+-- names suggest. `directions.out` is served by `departure_in`, and
+-- `directions.in` by `departure_out`, for every route in the snapshot.
+--
+-- The backend scrapes the timetable from CTP-CJ, whose own in/out labels are
+-- unrelated to Tranzy's direction ids, and reconciles them in
+-- `alignTimetableToDirectionIDs`: after it runs, `departure_in` is the column
+-- for Tranzy direction_id 0. The Playdate export then walks the directions as
+-- `{OUTGOING_SUFFIX, "out"}, {INCOMING_SUFFIX, "in"}` with
+-- `OUTGOING_SUFFIX = "_0"` -- so the geometry it publishes as "out" is that
+-- same direction_id 0, whose departures are in the column named "in".
+--
+-- Pairing them by name put every time in this app against the wrong stop
+-- sequence: the route line's buses and chips, the stop's departure list, the
+-- timetable grid and its stop times. It read plausibly, because the wrong
+-- direction of a two-way route is still a real timetable -- it is just not
+-- yours. Verified against route 32: `directions.out` runs from Disp. Alverna,
+-- the 08:55 trip out of Disp. Alverna is in `departure_in`, and nothing in
+-- `departure_out` matches it.
+--
+-- If the export is ever changed to line the two up, these two functions are
+-- the only thing to flip.
+function Store.departureField(dirKey)
+	return (dirKey == "out") and "departure_in" or "departure_out"
+end
+
+-- Headway-based directions carry the same swap; the backend swaps the two
+-- frequency fields alongside the departure columns.
+function Store.frequencyField(dirKey)
+	return (dirKey == "out") and "in_frequency" or "out_frequency"
+end
+
 local function parseHHMM(s)
 	local hour, minute = s:match("(%d+):(%d+)")
 	if hour == nil then return nil end
@@ -224,7 +256,7 @@ local function upcomingCalls(stopId, direction, dirKey, day, nowSeconds, maxTime
 	-- Trips end at the last stop; nothing to board there.
 	if index == #direction.stops then return nil end
 
-	local field = (dirKey == "out") and "departure_out" or "departure_in"
+	local field = Store.departureField(dirKey)
 	local calls = {}
 	for _, entry in ipairs(day.entries or {}) do
 		local time = entry[field]

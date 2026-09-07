@@ -43,11 +43,18 @@ local stopNames <const> = {
 	"Bucium", "Aleea Slănic", "Str. Unirii", "Disp. Clăbucet",
 }
 
-local function makeDirection(headsign)
+-- `count` and `pace` exist so that no two routes share a line shape. Every
+-- fake route used to point at one directions table, which made a whole class
+-- of bug invisible: scene state cached in a file local and keyed by anything
+-- less than the route id survives walking from one route to the next, and with
+-- identical stop counts and offsets the wrong data still draws a right-looking
+-- screen. Differing lengths make it fail loudly instead.
+local function makeDirection(headsign, count, pace)
+	count = math.min(count or #stopNames, #stopNames)
 	local stops, offsets = {}, {}
-	for i, name in ipairs(stopNames) do
-		stops[i] = { stop_id = i, stop_name = name }
-		offsets[i] = (i - 1) * 130
+	for i = 1, count do
+		stops[i] = { stop_id = i, stop_name = stopNames[i] }
+		offsets[i] = (i - 1) * (pace or 130)
 	end
 	local hourly = {}
 	for hour = 0, 23 do hourly[tostring(hour)] = offsets end
@@ -133,11 +140,18 @@ local routes = {
 	},
 }
 for i, shortName in ipairs(shortNames) do
+	-- 8 to 12 stops at a pace of its own, so walking between two routes cannot
+	-- reuse one's schedule against the other's line without it showing.
+	local count = 8 + (i % 5)
+	local pace = 90 + (i % 5) * 20
 	routes[i + 2] = {
 		route_id = i + 2,
 		route_short_name = shortName,
 		route_long_name = "P-ța Mihai Viteazul - Str. Emil Quinet nr. " .. i,
-		directions = route.directions,
+		directions = {
+			out = makeDirection("P-ța 1 Mai Sosire", count, pace),
+			["in"] = makeDirection("Disp. Clăbucet", count, pace),
+		},
 		timetable = shiftedTimetable(i * 3),
 	}
 end
@@ -222,15 +236,33 @@ local steps <const> = {
 	function() shoot("09-route-panned") end,
 	function() RouteScene.inputHandler.upButtonDown() end,
 	function() shoot("10-route-other-direction") end,
+	-- Back to the outbound line and out to the same stop again. A opens the
+	-- timetable measured at the focused stop, and B has to land back on that
+	-- stop rather than on the terminus the route was opened at, so the shot
+	-- after the round trip has to still read "stop 5 of 12".
+	function()
+		RouteScene.inputHandler.upButtonDown()
+		for _ = 1, 4 do RouteScene.inputHandler.rightButtonDown() end
+	end,
 	function() RouteScene.inputHandler.AButtonDown() end,
-	function() shoot("11-timetable") end,
+	-- Stop 5 is 8:40 down the line from the terminus, so every cell here must
+	-- read that much later than the same cell in 13-timetable.
+	function() shoot("11-timetable-at-stop") end,
+	function() TimetableScene.inputHandler.BButtonDown() end,
+	function() shoot("12-route-stop-remembered") end,
+	-- Stop 1 is the terminus, so the same button there is the plain timetable.
+	function()
+		for _ = 1, 4 do RouteScene.inputHandler.leftButtonDown() end
+		RouteScene.inputHandler.AButtonDown()
+	end,
+	function() shoot("13-timetable") end,
 	-- The timetable opens on the current hour, and Up stops at the tabs rather
 	-- than wrapping, so this is deterministic whatever time the run happens.
 	function() for _ = 1, 40 do TimetableScene.inputHandler.upButtonDown() end end,
-	function() shoot("12-timetable-tabs-focused") end,
+	function() shoot("14-timetable-tabs-focused") end,
 	function() TimetableScene.inputHandler.rightButtonDown() end,
 	function() TimetableScene.inputHandler.downButtonDown() end,
-	function() shoot("13-timetable-other-day") end,
+	function() shoot("15-timetable-other-day") end,
 	-- Down to 07:00, the row with twelve departures.
 	function() for _ = 1, 40 do TimetableScene.inputHandler.upButtonDown() end end,
 	function()
@@ -238,13 +270,13 @@ local steps <const> = {
 		TimetableScene.inputHandler.downButtonDown()
 		TimetableScene.inputHandler.downButtonDown()
 	end,
-	function() shoot("14-timetable-dense-hour") end,
+	function() shoot("16-timetable-dense-hour") end,
 	function() TimetableScene.inputHandler.AButtonDown() end,
-	function() shoot("15-trip-stop-times") end,
+	function() shoot("17-trip-stop-times") end,
 	function() for _ = 1, 4 do TripScene.inputHandler.downButtonDown() end end,
-	function() shoot("16-trip-scrolled") end,
+	function() shoot("18-trip-scrolled") end,
 	function() TripScene.inputHandler.BButtonDown() end,
-	function() shoot("17-timetable-remembered") end,
+	function() shoot("19-timetable-remembered") end,
 	-- The night route: hours run 23, 24, 25 in the data and must draw as
 	-- 23, 00, 01.
 	function()
@@ -256,33 +288,33 @@ local steps <const> = {
 		end
 	end,
 	-- Opens on a day this route does not run, so the grid is empty.
-	function() shoot("18-timetable-no-service") end,
+	function() shoot("20-timetable-no-service") end,
 	-- Weekdays run past midnight.
 	function() TimetableScene.inputHandler.rightButtonDown() end,
-	function() shoot("19-timetable-past-midnight") end,
+	function() shoot("21-timetable-past-midnight") end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() TimetableScene.inputHandler.BButtonDown() end,
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function() ListScene.inputHandler.BButtonDown() end,
-	function() shoot("20-back-at-mainmenu") end,
+	function() shoot("22-back-at-mainmenu") end,
 	function()
 		MainMenuScene.inputHandler.downButtonDown()
 		MainMenuScene.inputHandler.AButtonDown()
 	end,
-	function() shoot("21-stoplist") end,
+	function() shoot("23-stoplist") end,
 	function() ListScene.inputHandler.AButtonDown() end,
-	function() shoot("22-stop") end,
+	function() shoot("24-stop") end,
 	-- Drill from a departure into that route, in the direction shown.
 	function() for _ = 1, 2 do StopScene.inputHandler.downButtonDown() end end,
-	function() shoot("23-stop-scrolled") end,
+	function() shoot("25-stop-scrolled") end,
 	function() StopScene.inputHandler.AButtonDown() end,
-	function() shoot("24-stop-into-route") end,
+	function() shoot("26-stop-into-route") end,
 	function() RouteScene.inputHandler.BButtonDown() end,
 	function()
-		shootDetached("25-sync", SyncScene({}))
+		shootDetached("27-sync", SyncScene({}))
 		-- Stale snapshot: the menu's other state.
 		Store.data.synced_at = playdate.getSecondsSinceEpoch() - 3 * 24 * 60 * 60
-		shootDetached("26-mainmenu-stale", MainMenuScene({}))
+		shootDetached("28-mainmenu-stale", MainMenuScene({}))
 	end,
 }
 

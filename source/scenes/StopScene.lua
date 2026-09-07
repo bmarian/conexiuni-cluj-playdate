@@ -133,7 +133,7 @@ function scene:drawBackground()
 
 	Theme.header({
 		title = stop.stop_name,
-		icon = Store.isFavoriteStop(stop.stop_id) and "heart" or "map-pin",
+		icon = Store.isFavoriteStop(stop.stop_id) and "heart" or nil,
 	})
 
 	if #departures == 0 then

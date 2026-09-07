@@ -71,7 +71,22 @@ function Theme.badge(x, centerY, text, font, white)
 	return width
 end
 
+-- The clock is right-aligned inside a slot wide enough for the widest digits
+-- it could hold, so the title beside it does not shuffle sideways every time
+-- a digit changes.
+local CLOCK_W <const> = (function()
+	local widest = 0
+	for digit = 0, 9 do
+		widest = math.max(widest, Theme.FONT_TITLE:getTextWidth(tostring(digit)))
+	end
+	return 4 * widest + Theme.FONT_TITLE:getTextWidth(":")
+end)()
+
 -- opts: { title, badge, icon }
+--
+-- Every header carries the wall clock on the right. These are schedule
+-- screens: a "3m" chip or an 06:52 departure only means something next to the
+-- time it is counting from, and looking that up meant leaving the app.
 function Theme.header(opts)
 	local centerY = Theme.HEADER_H // 2
 	local left = Theme.MARGIN
@@ -80,12 +95,25 @@ function Theme.header(opts)
 	if opts.badge ~= nil then
 		left = left + Theme.badge(Theme.MARGIN, centerY, opts.badge, Theme.FONT_TITLE) + 14
 	end
-	if opts.icon ~= nil then
-		Icons.draw(opts.icon, 24, Theme.WIDTH - Theme.MARGIN - 24, centerY - 12)
-		right = right + 24 + Theme.MARGIN
-	end
 
-	-- Centered in what is left, so the title cannot run under badge or icon.
+	local now = playdate.getTime()
+	Theme.textCentered(
+		string.format("%02d:%02d", now.hour, now.minute),
+		Theme.WIDTH - Theme.MARGIN, centerY, kTextAlignment.right, Theme.FONT_TITLE
+	)
+	right = right + CLOCK_W
+
+	-- The clock took the corner the decorative icons used to sit in, so only
+	-- the ones saying something the title does not -- a filled heart, the sync
+	-- spinner -- still get a slot, to its left.
+	if opts.icon ~= nil then
+		right = right + 8
+		Icons.draw(opts.icon, 24, Theme.WIDTH - right - 24, centerY - 12)
+		right = right + 24
+	end
+	right = right + Theme.MARGIN
+
+	-- Centered in what is left, so the title cannot run under badge or clock.
 	local available = Theme.WIDTH - left - right
 	local title = Text.truncateToWidth(Text.clean(opts.title or ""), available, Theme.FONT_TITLE)
 	Theme.textCentered(title, left + available // 2, centerY, kTextAlignment.center, Theme.FONT_TITLE)
