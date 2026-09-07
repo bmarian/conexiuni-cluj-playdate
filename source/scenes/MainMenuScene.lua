@@ -15,6 +15,7 @@ local grid = nil
 local builtAtRevision = nil
 -- Kept across visits.
 local selectedRow = 1
+local favoriteMenuItem = nil
 
 local function listTop()
 	return Theme.CONTENT_TOP + BANNER_H
@@ -101,7 +102,32 @@ function scene:init(__sceneProperties)
 		})
 	end
 
+    favoriteMenuItem = nil
+
 	refresh()
+end
+
+function scene:start()
+    scene.super.start(self)
+
+	local function install()
+		if favoriteMenuItem ~= nil then
+			playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
+		end
+		favoriteMenuItem = playdate.getSystemMenu():addMenuItem("Sync now", function()
+		    Nav.reset(SyncScene)
+		end)
+	end
+	install()
+end
+
+function scene:exit()
+    scene.super.exit(self)
+
+    if favoriteMenuItem ~= nil then
+        playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
+        favoriteMenuItem = nil
+    end
 end
 
 function scene:enter()
@@ -141,7 +167,7 @@ function scene:drawBackground()
 
 	grid:drawInRect(0, listTop() + 1, Theme.WIDTH, ROW_H * #rows)
 
-	Theme.footer({ { button = "A", label = "open" }, { button = "B", label = "sync now" } })
+	Theme.footer({ { button = "A", label = "open" } })
 end
 
 scene.inputHandler = {
@@ -150,9 +176,5 @@ scene.inputHandler = {
 	AButtonDown = function()
 		local entry = rows[grid:getSelectedRow()]
 		if entry ~= nil then entry.open() end
-	end,
-	BButtonDown = function()
-		-- Nothing to go back to at the root.
-		Nav.reset(SyncScene)
 	end,
 }
