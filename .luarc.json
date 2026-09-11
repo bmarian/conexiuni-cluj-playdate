@@ -1,10 +1,22 @@
 {
   "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
-  "diagnostics.globals": ["import"],
+  "diagnostics.globals": ["import", "playdate"],
   "diagnostics.severity": { "duplicate-set-field": "Hint" },
   "format.defaultConfig": { "indent_style": "tab" },
   "runtime.builtin": { "io": "disable", "os": "disable", "package": "disable" },
-  "runtime.nonstandardSymbol": ["+=", "-=", "*=", "/=", "//=", "%=", "<<=", ">>=", "&=", "|=", "^="],
+  "runtime.nonstandardSymbol": [
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "//=",
+    "%=",
+    "<<=",
+    ">>=",
+    "&=",
+    "|=",
+    "^="
+  ],
   "runtime.version": "Lua 5.4",
   "workspace.preloadFileSize": 1000,
   "workspace.library": ["library/playdate-luacats"]
