@@ -5,7 +5,7 @@ Api = Api or {}
 
 local net <const> = playdate.network
 
--- Writes the response to disk in chunks; buffering the ~1MB export as a Lua
+-- Writes the response to disk in chunks; buffering the ~1.4MB bundle as a Lua
 -- string and decoding it in one callback trips the 10s loop watchdog.
 function Api.download(request)
 	local connection = net.http.new(request.host, request.port, request.useSSL, request.reason)

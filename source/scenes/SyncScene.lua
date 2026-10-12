@@ -1,5 +1,5 @@
--- Downloads the snapshot, then hands off to the main menu. The only screen
--- that touches the network.
+-- Downloads the network bundle, then hands off to the main menu. The only
+-- screen that touches the network.
 
 SyncScene = {}
 class("SyncScene").extends(NobleScene)
@@ -10,6 +10,8 @@ scene.backgroundColor = Graphics.kColorWhite
 local IDLE <const> = "idle"
 local DOWNLOADING <const> = "downloading"
 local READING <const> = "reading"
+-- The server is on the bundle already loaded; nothing to decode.
+local UP_TO_DATE <const> = "upToDate"
 local FAILED <const> = "failed"
 
 local phase = IDLE
@@ -28,10 +30,14 @@ local function startSync()
 		function(read, total)
 			bytesRead, bytesTotal = read or 0, total or 0
 		end,
-		function(ok, err)
+		function(ok, err, unchanged)
 			if not ok then
 				phase = FAILED
 				detail = tostring(err)
+				return
+			end
+			if unchanged then
+				phase = UP_TO_DATE
 				return
 			end
 			-- Let the "Reading timetable" frame paint before json.decode
@@ -59,7 +65,9 @@ function scene:update()
 	scene.super.update(self)
 	frames = frames + 1
 
-	if phase == READING and decodeAtFrame ~= nil and frames >= decodeAtFrame then
+	if phase == UP_TO_DATE then
+		Nav.reset(MainMenuScene)
+	elseif phase == READING and decodeAtFrame ~= nil and frames >= decodeAtFrame then
 		decodeAtFrame = nil
 		if Store.load() then
 			Nav.reset(MainMenuScene)
@@ -73,8 +81,8 @@ end
 local function statusText()
 	if phase == FAILED then return "Sync failed" end
 	if phase == READING then return "Reading timetable" end
-	-- DNS, TLS and the server building the export take about four seconds
-	-- before the first byte, which is most of the wait.
+	-- DNS and TLS take seconds before the first byte, and a re-sync asks for
+	-- the version before the bundle, so this is most of the wait.
 	local label = bytesRead > 0 and "Downloading" or "Connecting"
 	-- One dot per half second.
 	return label .. string.rep(".", (frames // 15) % 4)

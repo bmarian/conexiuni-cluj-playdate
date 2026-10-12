@@ -1,7 +1,7 @@
 -- Route Detail: a flat schematic line of stops with buses drawn where the
 -- schedule says they should be right now (elapsed time since a departure,
--- against the cumulative stop offsets published for the hour that departure
--- leaves in -- never live vehicle data).
+-- against the stop offsets learned for the hour that departure leaves in --
+-- never live vehicle data).
 --
 -- Three stops are on screen at a time, each owning a 132px slot and drawing
 -- its name horizontally inside 120px of it, wrapped over two lines. That is
@@ -128,10 +128,9 @@ local function logicalIndexForElapsed(offsets, elapsed)
 end
 
 -- Today's trips for the active direction, earliest first, as
--- { departure, label, offsets }. A trip runs on the offsets published for the
+-- { departure, label, offsets }. A trip runs on the offsets learned for the
 -- hour it leaves in rather than the hour it happens to be now, so each one
--- carries its own table; the hourly lookup is memoised because a busy route
--- publishes a hundred departures across a dozen distinct hours.
+-- carries its own table.
 --
 -- Entries can carry an empty string for one direction (a trip that only runs
 -- the other way), and 36 of the 107 routes have no Sunday service at all, so
@@ -139,26 +138,19 @@ end
 local function buildTrips()
 	local dir = direction()
 	if dir == nil or route.timetable == nil then return {} end
-	local day = route.timetable[Store.scheduleKeyForToday()]
+	local dayKey = Store.scheduleKeyForToday()
+	local day = route.timetable[dayKey]
 	if day == nil then return {} end
 
 	local field = Store.departureField(dirKey)
-	local offsetsByHour = {}
 	local result = {}
 	for _, entry in ipairs(day.entries or {}) do
 		local value = entry[field]
 		if value ~= nil and value ~= "" then
 			local departure = parseHHMM(value)
 			if departure ~= nil then
-				-- A night trip is published as "25:05"; it runs on the 01:00 offsets.
-				local hour = (departure // 3600) % 24
-				local offsets = offsetsByHour[hour]
-				if offsets == nil then
-					-- false, not nil, so a miss is not looked up again.
-					offsets = Store.offsetsForHour(dir, hour) or false
-					offsetsByHour[hour] = offsets
-				end
-				if offsets then
+				local offsets = Store.offsetsForHour(dir, dayKey, departure // 3600)
+				if offsets ~= nil then
 					table.insert(result, { departure = departure, label = value, offsets = offsets })
 				end
 			end
@@ -189,6 +181,8 @@ end
 -- Every trip counts, not only the ones already on the line: a stop near the
 -- start terminus is waiting on a bus that has not left yet, and the trip that
 -- rolled through ten minutes ago tells you nothing about when to be here.
+-- One that was due under Store.lateGraceSeconds ago still counts, as due now,
+-- the same as on the stop's own screen.
 local function secondsUntilNextBus(index, nowSeconds)
 	local soonest
 	for _, trip in ipairs(trips) do
@@ -199,6 +193,7 @@ local function secondsUntilNextBus(index, nowSeconds)
 			-- would win the comparison, and a "25:05" departure reads as minutes
 			-- away at 01:00 instead of a day.
 			local away = (trip.departure + offset - nowSeconds) % DAY_SECONDS
+			if away > DAY_SECONDS - Store.lateGraceSeconds then away = 0 end
 			if soonest == nil or away < soonest then soonest = away end
 		end
 	end

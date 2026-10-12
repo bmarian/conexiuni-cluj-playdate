@@ -1,5 +1,6 @@
 -- One departure, stop by stop: its time plus each stop's cumulative offset.
--- Properties: { route, dirKey, departure = "13:37" }.
+-- Properties: { route, dirKey, dayKey = "weekdays", departure = "13:37" },
+-- dayKey being the timetable tab the departure was picked from.
 
 TripScene = {}
 class("TripScene").extends(NobleScene)
@@ -13,7 +14,7 @@ local LIST_TOP <const> = 62
 local ROW_H <const> = 30
 local CRANK_DEGREES_PER_ROW <const> = 12
 
-local route, dirKey, departure
+local route, dirKey, dayKey, departure
 local calls = {}   -- { stopName, timeLabel, isNow }
 local grid = nil
 local crankAccumulator = 0
@@ -44,16 +45,18 @@ local function buildCalls()
 	local departureSeconds = parseHHMM(departure)
 	if departureSeconds == nil then return end
 
-	local offsets = Store.offsetsForHour(direction, departureSeconds // 3600)
+	local offsets = Store.offsetsForHour(direction, dayKey, departureSeconds // 3600)
 	if offsets == nil then return end
 
 	-- Without the upper bound every finished trip marks its last stop for the
-	-- rest of the day.
+	-- rest of the day; without the day check, Sunday's 13:37 is on the road
+	-- whenever Monday's would be.
 	local now = playdate.getTime()
 	local nowSeconds = now.hour * 3600 + now.minute * 60 + now.second
 	local elapsed = nowSeconds - departureSeconds
 	local total = offsets[#direction.stops]
-	local running = total ~= nil and elapsed >= 0 and elapsed <= total
+	local running = dayKey == Store.scheduleKeyForToday()
+		and total ~= nil and elapsed >= 0 and elapsed <= total
 
 	for index, stop in ipairs(direction.stops) do
 		local offset = offsets[index]
@@ -72,6 +75,7 @@ end
 function scene:init(__sceneProperties)
 	route = __sceneProperties.route
 	dirKey = __sceneProperties.dirKey
+	dayKey = __sceneProperties.dayKey
 	departure = __sceneProperties.departure
 	scene.super.init(self)
 

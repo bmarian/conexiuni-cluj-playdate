@@ -75,7 +75,8 @@ local function callAt(time)
 	local departure = tonumber(hour) * 3600 + tonumber(minute) * 60
 	-- The offsets of the hour the trip leaves in, not of the hour it arrives:
 	-- a trip out of the 07:00 rush runs on the 07:00 offsets for its whole run.
-	local offsets = Store.offsetsForHour(route.directions[dirKey], (departure // 3600) % 24)
+	-- And of the day on the tab, since a Sunday 07:00 is no rush hour.
+	local offsets = Store.offsetsForHour(route.directions[dirKey], dayKey, departure // 3600)
 	local offset = offsets ~= nil and offsets[stopIndex] or nil
 	if offset == nil then return hour, minute end
 
@@ -396,7 +397,7 @@ scene.inputHandler = {
 		end
 		local departure = selectedDeparture()
 		if departure ~= nil then
-			Nav.push(TripScene, { route = route, dirKey = dirKey, departure = departure.time })
+			Nav.push(TripScene, { route = route, dirKey = dirKey, dayKey = dayKey, departure = departure.time })
 		end
 	end,
 	BButtonDown = function() Nav.pop() end,
