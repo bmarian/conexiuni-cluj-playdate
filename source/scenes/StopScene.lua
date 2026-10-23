@@ -1,5 +1,5 @@
--- What is leaving this stop, soonest first, one row per route and direction.
--- Properties: { stop }.
+-- What is leaving this station, soonest first, one row per line and direction
+-- across all its platforms. Properties: { station }.
 
 StopScene = {}
 class("StopScene").extends(NobleScene)
@@ -13,13 +13,13 @@ local MAX_TIMES <const> = 3
 local MIN_LABEL_W <const> = 104
 local CRANK_DEGREES_PER_ROW <const> = 12
 
-local stop
+local station
 local departures = {}
 local grid = nil
 local crankAccumulator = 0
 local favoriteMenuItem = nil
 local builtAtMinute = nil
--- Selection per stop, so backing out of a route returns to it.
+-- Selection per station, so backing out of a line returns to it.
 local rememberedRows = {}
 
 local function listHeight()
@@ -47,10 +47,10 @@ local function labelsThatFit(entry, width)
 end
 
 function scene:init(__sceneProperties)
-	stop = __sceneProperties.stop
+	station = __sceneProperties.station
 	scene.super.init(self)
 
-	departures = Store.departuresAtStop(stop.stop_id, MAX_TIMES)
+	departures = Store.departuresAtStation(station, MAX_TIMES)
 	builtAtMinute = playdate.getTime().minute
 	crankAccumulator = 0
 	favoriteMenuItem = nil
@@ -60,7 +60,7 @@ function scene:init(__sceneProperties)
 	grid.scrollCellsToCenter = false
 	grid:setScrollDuration(120)
 
-	local saved = rememberedRows[stop.stop_id]
+	local saved = rememberedRows[station.station_id]
 	if saved ~= nil and #departures > 0 then
 		grid:setSelectedRow(math.min(saved, #departures))
 		grid:scrollCellToCenter(1, math.min(saved, #departures), 1, false)
@@ -85,14 +85,14 @@ function scene:update()
 	if minute ~= builtAtMinute then
 		builtAtMinute = minute
 		local selected = grid:getSelectedRow()
-		departures = Store.departuresAtStop(stop.stop_id, MAX_TIMES)
+		departures = Store.departuresAtStation(station, MAX_TIMES)
 		grid:setNumberOfRows(math.max(1, #departures))
 		grid:setSelectedRow(math.min(selected, math.max(1, #departures)))
 	end
 end
 
 local function favoriteLabel()
-	return Store.isFavoriteStop(stop.stop_id) and "unfavorite stop" or "favorite stop"
+	return Store.isFavoriteStation(station.station_id) and "unfavorite stop" or "favorite stop"
 end
 
 function scene:start()
@@ -103,7 +103,7 @@ function scene:start()
 			playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
 		end
 		favoriteMenuItem = playdate.getSystemMenu():addMenuItem(favoriteLabel(), function()
-			Store.toggleFavoriteStop(stop.stop_id)
+			Store.toggleFavoriteStation(station.station_id)
 			install()
 		end)
 	end
@@ -112,7 +112,7 @@ end
 
 function scene:exit()
 	scene.super.exit(self)
-	rememberedRows[stop.stop_id] = grid:getSelectedRow()
+	rememberedRows[station.station_id] = grid:getSelectedRow()
 	if favoriteMenuItem ~= nil then
 		playdate.getSystemMenu():removeMenuItem(favoriteMenuItem)
 		favoriteMenuItem = nil
@@ -132,8 +132,8 @@ function scene:drawBackground()
 	scene.super.drawBackground(self)
 
 	Theme.header({
-		title = stop.stop_name,
-		icon = Store.isFavoriteStop(stop.stop_id) and "heart" or nil,
+		title = station.stop_name,
+		icon = Store.isFavoriteStation(station.station_id) and "heart" or nil,
 	})
 
 	if #departures == 0 then
@@ -150,8 +150,8 @@ function scene:drawBackground()
 
 	local hints = {}
 	if #departures > 0 then
-		table.insert(hints, { pad = "upDown", label = "routes" })
-		table.insert(hints, { button = "A", label = "route" })
+		table.insert(hints, { pad = "upDown", label = "lines" })
+		table.insert(hints, { button = "A", label = "line" })
 	end
 	table.insert(hints, { button = "B", label = "back" })
 	Theme.footer(hints)
@@ -163,11 +163,11 @@ scene.inputHandler = {
 	AButtonDown = function()
 		local entry = departures[grid:getSelectedRow()]
 		if entry ~= nil then
-			-- Pass the stop so the route line opens where you are standing.
+			-- Pass the platform so the line opens where you are standing.
 			Nav.push(RouteScene, {
 				route = entry.route,
 				dirKey = entry.dirKey,
-				stopId = stop.stop_id,
+				stopId = entry.stopId,
 			})
 		end
 	end,

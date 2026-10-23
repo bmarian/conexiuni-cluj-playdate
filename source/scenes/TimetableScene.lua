@@ -55,7 +55,7 @@ local function clamp(value, lo, hi)
 end
 
 local function day()
-	return route.timetable ~= nil and route.timetable[dayKey] or nil
+	return Store.timetableDay(route, dayKey)
 end
 
 local function departureField()

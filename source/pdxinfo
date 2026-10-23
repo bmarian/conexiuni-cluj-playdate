@@ -1,7 +1,7 @@
-name=Conexiuni Cluj
+name=Ce autobuz iau?
 author=bmarian
-description=Offline Cluj-Napoca public transit schedules for Playdate
+description=Bus, tram and trolleybus timetables for Romanian cities, offline after one sync
 bundleID=com.bmarian.conexiunicluj
-version=0.2.0
-buildNumber=3
+version=0.3.0
+buildNumber=4
 imagePath=launcher

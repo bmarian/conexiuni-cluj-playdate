@@ -1,4 +1,4 @@
--- One list for All routes, All stops and both favorites screens. Properties:
+-- One list for All lines, All stops and both favorites screens. Properties:
 -- { key, title, items, icon, emptyIcon, emptyTitle, emptyDetail, refresh }.
 
 ListScene = {}
@@ -26,7 +26,7 @@ local function open(item)
     if isRoute(item) then
         Nav.push(RouteScene, { route = item })
     else
-        Nav.push(StopScene, { stop = item })
+        Nav.push(StopScene, { station = item })
     end
 end
 
@@ -37,8 +37,8 @@ local function setFavorite(item, favorite)
         if Store.isFavoriteRoute(item.route_id) ~= favorite then
             Store.toggleFavoriteRoute(item.route_id)
         end
-    elseif Store.isFavoriteStop(item.stop_id) ~= favorite then
-        Store.toggleFavoriteStop(item.stop_id)
+    elseif Store.isFavoriteStation(item.station_id) ~= favorite then
+        Store.toggleFavoriteStation(item.station_id)
     end
 end
 
@@ -80,7 +80,7 @@ function scene:init(__sceneProperties)
             Theme.row(y, height, selected, {
                 icon = "map-pin",
                 label = item.stop_name,
-                markIcon = Store.isFavoriteStop(item.stop_id) and "heart" or nil,
+                markIcon = Store.isFavoriteStation(item.station_id) and "heart" or nil,
                 width = width,
             })
         end

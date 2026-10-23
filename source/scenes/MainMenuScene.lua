@@ -1,5 +1,5 @@
--- Snapshot age, and four ways in: favorite routes, favorite stops, and the
--- full lists of each.
+-- The city and how old its timetables are, and the ways in: favorite lines,
+-- favorite stops, the full lists of each, and the city list.
 
 MainMenuScene = {}
 class("MainMenuScene").extends(NobleScene)
@@ -8,7 +8,7 @@ local scene = MainMenuScene
 scene.backgroundColor = Graphics.kColorWhite
 
 local BANNER_H <const> = 26
-local ROW_H <const> = 34
+local ROW_H <const> = 30
 
 local rows = {}
 local grid = nil
@@ -26,32 +26,32 @@ local function buildRows()
     rows = {
         {
             icon = "heart",
-            label = "Favorite routes",
+            label = "Favorite lines",
             accessory = #Store.favoriteRoutes() .. "",
             open = function()
                 Nav.push(ListScene, {
                     key = "favroutes",
-                    title = "Favorite routes",
+                    title = "Favorite lines",
                     icon = "heart",
                     items = Store.favoriteRoutes(),
                     refresh = Store.favoriteRoutes,
                     emptyIcon = "heart",
-                    emptyTitle = "No favorite routes",
-                    emptyDetail = "press right on a route in All routes",
+                    emptyTitle = "No favorite lines",
+                    emptyDetail = "press right on a line in All lines",
                 })
             end,
         },
         {
             icon = "heart",
             label = "Favorite stops",
-            accessory = #Store.favoriteStops() .. "",
+            accessory = #Store.favoriteStations() .. "",
             open = function()
                 Nav.push(ListScene, {
                     key = "favstops",
                     title = "Favorite stops",
                     icon = "heart",
-                    items = Store.favoriteStops(),
-                    refresh = Store.favoriteStops,
+                    items = Store.favoriteStations(),
+                    refresh = Store.favoriteStations,
                     emptyIcon = "heart",
                     emptyTitle = "No favorite stops",
                     emptyDetail = "press right on a stop in All stops",
@@ -60,18 +60,26 @@ local function buildRows()
         },
         {
             icon = "bus",
-            label = "All routes",
+            label = "All lines",
             accessory = Store.data and #Store.data.routes .. "" or "0",
             open = function()
-                Nav.push(ListScene, { key = "routes", title = "All routes", items = Store.data.routes })
+                Nav.push(ListScene, { key = "routes", title = "All lines", items = Store.data.routes })
             end,
         },
         {
             icon = "map-pin",
             label = "All stops",
-            accessory = Store.data and #Store.data.stops .. "" or "0",
+            accessory = Store.data and #Store.data.stations .. "" or "0",
             open = function()
-                Nav.push(ListScene, { key = "stops", title = "All stops", items = Store.data.stops })
+                Nav.push(ListScene, { key = "stops", title = "All stops", items = Store.data.stations })
+            end,
+        },
+        {
+            icon = "map-pin",
+            label = "City",
+            accessory = Text.clean(Store.city ~= nil and Store.city.name or ""),
+            open = function()
+                Nav.push(CityScene)
             end,
         },
     }
@@ -152,9 +160,9 @@ end
 function scene:drawBackground()
     scene.super.drawBackground(self)
 
-    Theme.header({ title = "Conexiuni Cluj" })
+    Theme.header({ title = "Ce autobuz iau?" })
 
-    -- How old the snapshot is, with a warning icon once it's worth refreshing.
+    -- How old the timetables are, with a warning icon once it's worth refreshing.
     local agoText, stale = Store.syncedAgoText()
     local bannerCenterY = Theme.CONTENT_TOP + BANNER_H // 2
     Icons.drawCentered(stale and "square-alert" or "clock", 12, Theme.MARGIN + 6, bannerCenterY)

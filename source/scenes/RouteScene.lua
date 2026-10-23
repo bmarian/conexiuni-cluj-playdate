@@ -122,9 +122,9 @@ end
 -- an empty list is a normal answer rather than a data problem.
 local function buildTrips()
     local dir = direction()
-    if dir == nil or route.timetable == nil then return {} end
+    if dir == nil then return {} end
     local dayKey = Store.scheduleKeyForToday()
-    local day = route.timetable[dayKey]
+    local day = Store.timetableDay(route, dayKey)
     if day == nil then return {} end
 
     local field = Store.departureField(dirKey)
@@ -254,7 +254,7 @@ function scene:init(__sceneProperties)
 end
 
 local function favoriteLabel()
-    return Store.isFavoriteRoute(route.route_id) and "unfavorite route" or "favorite route"
+    return Store.isFavoriteRoute(route.route_id) and "unfavorite line" or "favorite line"
 end
 
 -- A pop rebuilds this scene from the properties left on the nav stack, and the
